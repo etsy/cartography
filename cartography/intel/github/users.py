@@ -202,7 +202,8 @@ def load_unaffiliated_owners(
     Note the subtle differences between what is loaded here and what in load_organization_users:
     1. The user-org relationship is set to UNAFFILIATED instead of MEMBER_OF.
     2. 'role' is not set: these users have no role in the organization (i.e. they are neither 'MEMBER' nor 'ADMIN').
-    2. 'has_2fa_enabled' is not set: it is unavailable from the GraphQL query for these owners
+    3. 'has_2fa_enabled' is not set: it is unavailable from the GraphQL query for these owners
+    4. 'is_enterprise_owner' is always set to TRUE
 
     If the user does already exist in the graph (perhaps they are members of other orgs) then this merge will
     update the user's node but leave 'role' and 'has_2fa_enabled' untouched.
