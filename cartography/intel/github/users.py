@@ -192,6 +192,51 @@ def load_organization_users(
         UpdateTag=update_tag,
     )
 
+@timeit
+def load_unaffiliated_owners(
+    neo4j_session: neo4j.Session, owner_data: List[Dict], org_data: Dict,
+    update_tag: int,
+) -> None:
+    """
+    The owner_data here represents users who are enterprise owners but are not in the target org.
+    Note the subtle differences between what is loaded here and what in load_organization_users:
+    1. The user-org relationship is set to UNAFFILIATED instead of MEMBER_OF.
+    2. 'role' is not set: these users have no role in the organization (i.e. they are neither 'MEMBER' nor 'ADMIN').
+    2. 'has_2fa_enabled' is not set: it is unavailable from the GraphQL query for these owners
+
+    If the user does already exist in the graph (perhaps they are members of other orgs) then this merge will
+    update the user's node but leave 'role' and 'has_2fa_enabled' untouched.
+    """
+    query = """
+    MERGE (org:GitHubOrganization{id: $OrgUrl})
+    ON CREATE SET org.firstseen = timestamp()
+    SET org.username = $OrgLogin,
+    org.lastupdated = $UpdateTag
+    WITH org
+
+    UNWIND $UserData as user
+
+    MERGE (u:GitHubUser{id: user.node.url})
+    ON CREATE SET u.firstseen = timestamp()
+    SET u.fullname = user.node.name,
+    u.username = user.node.login,
+    u.is_site_admin = user.node.isSiteAdmin,
+    u.is_enterprise_owner = TRUE,
+    u.email = user.node.email,
+    u.company = user.node.company,
+    u.lastupdated = $UpdateTag
+
+    MERGE (u)-[r:UNAFFILIATED]->(org)
+    ON CREATE SET r.firstseen = timestamp()
+    SET r.lastupdated = $UpdateTag
+    """
+    neo4j_session.run(
+        query,
+        OrgUrl=org_data['url'],
+        OrgLogin=org_data['login'],
+        UserData=owner_data,
+        UpdateTag=update_tag,
+    )
 
 @timeit
 def sync(
@@ -205,14 +250,14 @@ def sync(
     user_data, user_org_data = get_users(github_api_key, github_url, organization)
     affiliated_owner_data, unaffiliated_owner_data, owner_org_data = get_enterprise_owners(github_api_key, github_url, organization)
     processed_user_data = _mark_users_as_enterprise_owners(user_data, user_org_data, affiliated_owner_data, owner_org_data)
-    print('hihi')
-    # load_organization_users(neo4j_session, user_data, org_data, common_job_parameters['UPDATE_TAG'])
-    # run_cleanup_job('github_users_cleanup.json', neo4j_session, common_job_parameters)
-    # merge_module_sync_metadata(
-    #     neo4j_session,
-    #     group_type='GitHubOrganization',
-    #     group_id=org_data['url'],
-    #     synced_type='GitHubOrganization',
-    #     update_tag=common_job_parameters['UPDATE_TAG'],
-    #     stat_handler=stat_handler,
-    # )
+    load_organization_users(neo4j_session, processed_user_data, user_org_data, common_job_parameters['UPDATE_TAG'])
+    load_unaffiliated_owners(neo4j_session, unaffiliated_owner_data, owner_org_data, common_job_parameters['UPDATE_TAG'])
+    run_cleanup_job('github_users_cleanup.json', neo4j_session, common_job_parameters)
+    merge_module_sync_metadata(
+        neo4j_session,
+        group_type='GitHubOrganization',
+        group_id=user_org_data['url'],
+        synced_type='GitHubOrganization',
+        update_tag=common_job_parameters['UPDATE_TAG'],
+        stat_handler=stat_handler,
+    )
