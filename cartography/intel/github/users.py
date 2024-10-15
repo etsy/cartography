@@ -44,9 +44,35 @@ GITHUB_ORG_USERS_PAGINATED_GRAPHQL = """
     }
     """
 
+GITHUB_ENTERPRISE_OWNER_USERS_PAGINATED_GRAPHQL = """
+    query($login: String!, $cursor: String) {
+    organization(login: $login)
+        {
+            url
+            login
+            enterpriseOwners(first:100, after: $cursor){
+                edges {
+                    node {
+                        url
+                        login
+                        name
+                        isSiteAdmin
+                        email
+                        company
+                    }
+                    organizationRole
+                }
+                pageInfo{
+                    endCursor
+                    hasNextPage
+                }
+            }
+        }
+    }
+    """
 
 @timeit
-def get(token: str, api_url: str, organization: str) -> Tuple[List[Dict], Dict]:
+def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], Dict]:
     """
     Retrieve a list of users from the given GitHub organization as described in
     https://docs.github.com/en/graphql/reference/objects#organizationmemberedge.
@@ -64,6 +90,37 @@ def get(token: str, api_url: str, organization: str) -> Tuple[List[Dict], Dict]:
         'membersWithRole',
     )
     return users.edges, org
+
+@timeit
+def get_enterprise_owners(token: str, api_url: str, organization: str) -> Tuple[List[Dict], List[Dict], Dict]:
+    """
+        Retrieve a list of enterprise owners from the given GitHub organization as described in
+        https://docs.github.com/en/graphql/reference/objects#organizationenterpriseowneredge.
+        :param token: The Github API token as string.
+        :param api_url: The Github v4 API endpoint as string.
+        :param organization: The name of the target Github organization as string.
+        :return: A 2-tuple containing
+            1. a list of dicts representing users in the organization - see tests.data.github.users.GITHUB_ENTERPRISE_OWNER_DATA for shape
+            2. a list of dicts representing users not in the organization - see tests.data.github.users.GITHUB_ENTERPRISE_OWNER_DATA for shape
+            3. data on the owning GitHub organization - see tests.data.github.users.GITHUB_ORG_DATA for shape.
+        """
+    owners, org = fetch_all(
+        token,
+        api_url,
+        organization,
+        GITHUB_ENTERPRISE_OWNER_USERS_PAGINATED_GRAPHQL,
+        'enterpriseOwners',
+    )
+
+    unaffiliated_owners = []
+    affiliated_owners = []
+    for owner in owners.edges:
+        if owner['organizationRole'] == 'UNAFFILIATED':
+            unaffiliated_owners.append(owner)
+        else:
+            affiliated_owners.append(owner)
+
+    return affiliated_owners, unaffiliated_owners, org
 
 
 @timeit
@@ -113,14 +170,16 @@ def sync(
         organization: str,
 ) -> None:
     logger.info("Syncing GitHub users")
-    user_data, org_data = get(github_api_key, github_url, organization)
-    load_organization_users(neo4j_session, user_data, org_data, common_job_parameters['UPDATE_TAG'])
-    run_cleanup_job('github_users_cleanup.json', neo4j_session, common_job_parameters)
-    merge_module_sync_metadata(
-        neo4j_session,
-        group_type='GitHubOrganization',
-        group_id=org_data['url'],
-        synced_type='GitHubOrganization',
-        update_tag=common_job_parameters['UPDATE_TAG'],
-        stat_handler=stat_handler,
-    )
+    user_data, org_data = get_users(github_api_key, github_url, organization)
+    affiliated_owners, unaffiliated_owners, org_data = get_enterprise_owners(github_api_key, github_url, organization)
+    print('hihi')
+    # load_organization_users(neo4j_session, user_data, org_data, common_job_parameters['UPDATE_TAG'])
+    # run_cleanup_job('github_users_cleanup.json', neo4j_session, common_job_parameters)
+    # merge_module_sync_metadata(
+    #     neo4j_session,
+    #     group_type='GitHubOrganization',
+    #     group_id=org_data['url'],
+    #     synced_type='GitHubOrganization',
+    #     update_tag=common_job_parameters['UPDATE_TAG'],
+    #     stat_handler=stat_handler,
+    # )
