@@ -1,8 +1,9 @@
 from unittest.mock import patch
+
 import cartography.intel.github.users
-from tests.data.github.users import GITHUB_USER_DATA
-from tests.data.github.users import GITHUB_ORG_DATA
 from tests.data.github.users import GITHUB_ENTERPRISE_OWNER_DATA
+from tests.data.github.users import GITHUB_ORG_DATA
+from tests.data.github.users import GITHUB_USER_DATA
 
 TEST_UPDATE_TAG = 123456789
 TEST_JOB_PARAMS = {'UPDATE_TAG': TEST_UPDATE_TAG}
@@ -23,7 +24,8 @@ def test_sync(mock_owners, mock_users, neo4j_session):
         TEST_JOB_PARAMS,
         FAKE_API_KEY,
         TEST_GITHUB_URL,
-        TEST_GITHUB_ORG)
+        TEST_GITHUB_ORG,
+    )
 
     # Assert
 
@@ -103,7 +105,6 @@ def test_sync(mock_owners, mock_users, neo4j_session):
     assert actual_nodes == expected_nodes
 
     # Ensure hasTwoFactorEnabled has not been improperly overwritten for enterprise owners
-    # Ensure enterprise owners are identified
     nodes = neo4j_session.run(
         """
         MATCH (g:GitHubUser) RETURN g.id, g.has_2fa_enabled
