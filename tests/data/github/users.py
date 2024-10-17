@@ -1,4 +1,10 @@
-GITHUB_USER_DATA = [
+GITHUB_ORG_DATA = {
+    'url': 'https://example.com/my_org',
+    'login': 'my_org',
+}
+
+
+GITHUB_USER_DATA = ([
     {
         'hasTwoFactorEnabled': None,
         'node': {
@@ -13,6 +19,17 @@ GITHUB_USER_DATA = [
     }, {
         'hasTwoFactorEnabled': None,
         'node': {
+            'url': 'https://example.com/lmsimpson',
+            'login': 'lmsimpson',
+            'name': 'Lisa Simpson',
+            'isSiteAdmin': False,
+            'email': 'lmsimpson@example.com',
+            'company': 'Simpson Residence',
+        },
+        'role': 'MEMBER',
+    }, {
+        'hasTwoFactorEnabled': True,
+        'node': {
             'url': 'https://example.com/mbsimpson',
             'login': 'mbsimpson',
             'name': 'Marge Simpson',
@@ -21,16 +38,16 @@ GITHUB_USER_DATA = [
             'company': 'Simpson Residence',
         },
         'role': 'ADMIN',
-    },
-]
+    }],
+    GITHUB_ORG_DATA
+)
 
-# Note the subtle differences between owner data and user data:
+# Subtle differences between owner data and user data:
 # 1. owner data does not include a `hasTwoFactorEnabled` field (it in unavailable in the GraphQL query for these owners)
-# 2. an `organizationRole` field instead of a `role` field.  For user data, membership in the queried org
-#    is assumed.  The owner data, membership is not assumed, so there is an 'UNAFFILIATED' value for owners who are
-#    not also users in an organization.  In this list, the 'OWNER' organizationRole matches the 'ADMIN' role in the
-#    user data.  Similarly, the 'DIRECT_MEMBER' organizationRole matches the 'MEMBER' role.
-GITHUB_ENTERPRISE_OWNER_DATA = [ # TODO put in real fake values for testing
+# 2. an `organizationRole` field instead of a `role` field.  In owner data, membership within an org is not assumed, so
+#    there is an 'UNAFFILIATED' value for owners of an org who are not also members of it.  (Otherwise the 'OWNER'
+#    organizationRole matches the 'ADMIN' role in the user data, and the 'DIRECT_MEMBER' organizationRole matches the 'MEMBER' role.)
+GITHUB_ENTERPRISE_OWNER_DATA = ([
     {
         'node': {
             'url': 'https://example.com/kbroflovski',
@@ -43,14 +60,14 @@ GITHUB_ENTERPRISE_OWNER_DATA = [ # TODO put in real fake values for testing
         'organizationRole': 'UNAFFILIATED',
     }, {
         'node': {
-            'url': 'https://example.com/bjsimpson',
-            'login': 'bjsimpson',
-            'name': 'Bartholomew Simpson',
+            'url': 'https://example.com/mbsimpson',
+            'login': 'mbsimpson',
+            'name': 'Marge Simpson',
             'isSiteAdmin': False,
-            'email': 'bjsimpson@example.com',
+            'email': 'mbsimpson@example.com',
             'company': 'Simpson Residence',
         },
-        'organizationRole': 'DIRECT_MEMBER',
+        'organizationRole': 'OWNER',
     }, {
         'node': {
             'url': 'https://example.com/lmsimpson',
@@ -60,11 +77,8 @@ GITHUB_ENTERPRISE_OWNER_DATA = [ # TODO put in real fake values for testing
             'email': 'lmsimpson@example.com',
             'company': 'Simpson Residence',
         },
-        'organizationRole': 'OWNER',
-    },
-]
+        'organizationRole': 'DIRECT_MEMBER',
+    }],
+    GITHUB_ORG_DATA
+)
 
-GITHUB_ORG_DATA = {
-    'url': 'https://example.com/my_org',
-    'login': 'my_org',
-}
