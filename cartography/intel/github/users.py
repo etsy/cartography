@@ -80,8 +80,10 @@ def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], 
     :param token: The Github API token as string.
     :param api_url: The Github v4 API endpoint as string.
     :param organization: The name of the target Github organization as string.
-    :return: A 2-tuple containing 1. a list of dicts representing users - see tests.data.github.users.GITHUB_USER_DATA
-    for shape, and 2. data on the owning GitHub organization - see tests.data.github.users.GITHUB_ORG_DATA for shape.
+    :return: A 2-tuple containing
+        1. a list of dicts representing users and
+        2. data on the owning GitHub organization
+        see tests.data.github.users.GITHUB_ORG_DATA for shape of both
     """
     users, org = fetch_all(
         token,
@@ -92,19 +94,10 @@ def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], 
     )
     return users.edges, org
 
-@timeit
-def get_enterprise_owners(token: str, api_url: str, organization: str) -> Tuple[List[Dict], List[Dict], Dict]:
+def _get_enterprise_owners_raw(token: str, api_url: str, organization: str) -> Tuple[List[Dict], Dict]:
     """
-        Retrieve a list of enterprise owners from the given GitHub organization as described in
-        https://docs.github.com/en/graphql/reference/objects#organizationenterpriseowneredge.
-        :param token: The Github API token as string.
-        :param api_url: The Github v4 API endpoint as string.
-        :param organization: The name of the target Github organization as string.
-        :return: A 2-tuple containing
-            1. a list of dicts representing enterprise owners who are also users in the organization - see tests.data.github.users.GITHUB_ENTERPRISE_OWNER_DATA for shape
-            2. a list of dicts representing enterprise owners who are NOT users in the organization - see tests.data.github.users.GITHUB_ENTERPRISE_OWNER_DATA for shape
-            3. data on the owning GitHub organization - see tests.data.github.users.GITHUB_ORG_DATA for shape.
-        """
+    Function broken out for testing purposes.  See 'get_enterprise_owners' for docs.
+    """
     owners, org = fetch_all(
         token,
         api_url,
@@ -112,10 +105,26 @@ def get_enterprise_owners(token: str, api_url: str, organization: str) -> Tuple[
         GITHUB_ENTERPRISE_OWNER_USERS_PAGINATED_GRAPHQL,
         'enterpriseOwners',
     )
+    return owners.edges, org
 
+@timeit
+def get_enterprise_owners(token: str, api_url: str, organization: str) -> Tuple[List[Dict], List[Dict], Dict]:
+    """
+    Retrieve a list of enterprise owners from the given GitHub organization as described in
+    https://docs.github.com/en/graphql/reference/objects#organizationenterpriseowneredge.
+    :param token: The Github API token as string.
+    :param api_url: The Github v4 API endpoint as string.
+    :param organization: The name of the target Github organization as string.
+    :return: A 3-tuple containing
+        1. a list of dicts representing enterprise owners who are also users in the organization
+        2. a list of dicts representing enterprise owners who are not users in the organization
+        3. data on the owning GitHub organization
+        see tests.data.github.users.GITHUB_ENTERPRISE_OWNER_DATA for shape
+    """
+    owners, org = _get_enterprise_owners_raw(token, api_url, organization)
     unaffiliated_owners = []
     affiliated_owners = []
-    for owner in owners.edges:
+    for owner in owners:
         if owner['organizationRole'] == 'UNAFFILIATED':
             unaffiliated_owners.append(owner)
         else:
@@ -130,12 +139,11 @@ def _mark_users_as_enterprise_owners(
         owner_org_data: Dict,
 ) -> list[Dict]:
     """
-    For every organization user, mark if they are also an enterprise owner.
     :param user_data: A list of dicts representing users - see tests.data.github.users.GITHUB_USER_DATA for shape.
     :param user_org_data: A dict representing the organization for the user_data - see tests.data.github.users.GITHUB_ORG_DATA for shape.
-    :param affiliated_owner_data: A list of dicts representing affiliated enterprise owners - see tests.data.github.users.GITHUB_ENTERPRISE_OWNER_DATA for shape.
-    :param owner_org_data: A dict representing the organization for the enterprise_owner_data - see tests.data.github.users.GITHUB_ORG_DATA for shape.
-    :return: A new list of user_data dicts, updated with a new property, isEnterpriseOwner
+    :param affiliated_owner_data: A list of dicts representing affiliated enterprise owners (owners who are also users in the org) - see tests.data.github.users.GITHUB_ENTERPRISE_OWNER_DATA for shape.
+    :param owner_org_data: A dict representing the organization for the owner data - see tests.data.github.users.GITHUB_ORG_DATA for shape.
+    :return: A new list of user_data dicts updated with a new property, isEnterpriseOwner
     """
 
     # Guarding against accidental mixing of data from different orgs.  Since user data and owner data are queried
@@ -199,11 +207,11 @@ def load_unaffiliated_owners(
 ) -> None:
     """
     The owner_data here represents users who are enterprise owners but are not in the target org.
-    Note the subtle differences between what is loaded here and what in load_organization_users:
-    1. The user-org relationship is set to UNAFFILIATED instead of MEMBER_OF.
+    Note the subtle differences between what is loaded here and in load_organization_users:
+    1. The user-org relationship is set to UNAFFILIATED
     2. 'role' is not set: these users have no role in the organization (i.e. they are neither 'MEMBER' nor 'ADMIN').
-    3. 'has_2fa_enabled' is not set: it is unavailable from the GraphQL query for these owners
-    4. 'is_enterprise_owner' is always set to TRUE
+    3. 'has_2fa_enabled' is not set (it is unavailable from the GraphQL query for these owners)
+    4. 'is_enterprise_owner' is set to TRUE
 
     If the user does already exist in the graph (perhaps they are members of other orgs) then this merge will
     update the user's node but leave 'role' and 'has_2fa_enabled' untouched.
