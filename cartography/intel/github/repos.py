@@ -1,7 +1,8 @@
 import configparser
 import logging
+from time import sleep
 from string import Template
-from typing import Any
+from typing import Any, Tuple
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -59,17 +60,11 @@ GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
                         login
                         __typename
                     }
-                    collaborators(affiliation: OUTSIDE, first: 50) {
-                        edges {
-                            permission
-                        }
-                        nodes {
-                            url
-                            login
-                            name
-                            email
-                            company
-                        }
+                    directCollaborators: collaborators(first: 100, affiliation: DIRECT) {        
+                        totalCount
+                    }
+                    outsideCollaborators: collaborators(first: 100, affiliation: OUTSIDE) {        
+                        totalCount
                     }
                     requirements:object(expression: "HEAD:requirements.txt") {
                         ... on Blob {
@@ -88,6 +83,111 @@ GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
     """
 # Note: In the above query, `HEAD` references the default branch.
 # See https://stackoverflow.com/questions/48935381/github-graphql-api-default-branch-in-repository
+
+GITHUB_REPO_COLLABS_PAGINATED_GRAPHQL = """
+    query($login: String!, $repo: String!, $affiliation: CollaboratorAffiliation!, $cursor: String) {
+        organization(login: $login) {
+            url
+            login
+            repository(name: $repo){
+                name
+                collaborators(first: 50, affiliation: $affiliation, after: $cursor) {
+                    edges {
+                        permission
+                    }
+                    nodes {
+                        url
+                        login
+                        name
+                        email
+                        company
+                    }
+                    pageInfo{
+                        endCursor
+                        hasNextPage
+                    }
+                }
+            }
+        }
+        rateLimit {
+            limit
+            cost
+            remaining
+            resetAt
+        }
+    }
+    """
+
+def _get_repo_collaborators_for_multiple_repos(
+        repo_raw_data: list[dict[str, Any]],
+        affiliation: str,
+        org: str,
+        api_url: str,
+        token: str,
+) -> dict[str, List[Tuple]]:
+    """
+    TODO document result... I think it is repo name -> list of collaborator objects
+    where collab object should include at least:
+        collab URL, access ('WRITE', 'ADMIN', etc), ??? and affiliation type (OUTSIDE, DIRECT)
+    """
+    result: dict[str, List[Tuple]] = {}
+    for repo in repo_raw_data:
+        repo_name = repo['name']
+
+        if (affiliation == 'OUTSIDE' and repo['outsideCollaborators']['totalCount'] == 0) or (affiliation == 'DIRECT' and repo['directCollaborators']['totalCount'] == 0):
+            # This repo has no collaborators of the affiliation type we're looking for, so let's move on
+            result[repo_name] = []
+            continue
+
+        collab_urls = []
+        collab_permission = []
+
+        max_tries = 5
+        for current_try in range(1, max_tries + 1):
+            collaborators = _get_repo_collaborators(token, api_url, org, repo_name, affiliation)
+            try:
+                # The `or []` is because `.nodes` can be None. See:
+                # https://docs.github.com/en/graphql/reference/objects#teamrepositoryconnection # TODO check
+                for collab in collaborators.nodes or []:
+                    collab_urls.append(collab['url'])
+
+                # The `or []` is because `.edges` can be None.
+                for perm in collaborators.edges or []:
+                    collab_permission.append(perm['permission'])
+                # We're done! Break out of the retry loop.
+                break
+
+            except TypeError:
+                # TODO try to understand if these issues are relevant here...
+                # Handles issue #1334
+                logger.warning(
+                    f"GitHub returned None when trying to find collaborator or permission data for repo {repo_name}.",
+                    exc_info=True,
+                )
+                if current_try == max_tries:
+                    raise RuntimeError(f"GitHub returned a None collaborator url for repo {repo_name}, retries exhausted.")
+                sleep(current_try ** 2)
+
+        # Shape = [(collab_url, 'WRITE'), ...]]
+        result[repo_name] = [(url, perm) for url, perm in zip(collab_urls, collab_permission)]
+    return result
+
+
+def _get_repo_collaborators(token: str, api_url: str, organization: str, repo: str, affiliation: str) -> List[Dict]:
+    """
+    TODO docs
+    """
+    collaborators, _ = fetch_all(
+        token,
+        api_url,
+        organization,
+        GITHUB_REPO_COLLABS_PAGINATED_GRAPHQL,
+        'repository',
+        resource_inner_type='collaborators',
+        repo = repo,
+        affiliation = affiliation
+    )
+    return collaborators
 
 
 @timeit
@@ -561,6 +661,9 @@ def sync(
     """
     logger.info("Syncing GitHub repos")
     repos_json = get(github_api_key, github_url, organization)
+    direct_collabs = _get_repo_collaborators_for_multiple_repos(repos_json, "DIRECT", organization, github_url, github_api_key)
+    outside_collabs = _get_repo_collaborators_for_multiple_repos(repos_json, "OUTSIDE", organization, github_url, github_api_key)
+    print("hi")
     repo_data = transform(repos_json)
     load(neo4j_session, common_job_parameters, repo_data)
     run_cleanup_job('github_repos_cleanup.json', neo4j_session, common_job_parameters)
