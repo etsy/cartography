@@ -128,18 +128,19 @@ def _get_repo_collaborators_for_multiple_repos(
     """
     TODO document result... I think it is repo name -> list of collaborator objects
     where collab object should include at least:
-        collab URL, access ('WRITE', 'ADMIN', etc), ??? and affiliation type (OUTSIDE, DIRECT)
+        collab URL, access ('WRITE', 'ADMIN', etc), affiliation type (OUTSIDE, DIRECT)
     """
     result: dict[str, List[Tuple]] = {}
     for repo in repo_raw_data:
         repo_name = repo['name']
+        repo_url = repo['url']
 
         if (affiliation == 'OUTSIDE' and repo['outsideCollaborators']['totalCount'] == 0) or (affiliation == 'DIRECT' and repo['directCollaborators']['totalCount'] == 0):
             # This repo has no collaborators of the affiliation type we're looking for, so let's move on
-            result[repo_name] = []
+            result[repo_url] = []
             continue
 
-        collab_urls = []
+        collab_users = []
         collab_permission = []
 
         max_tries = 5
@@ -149,7 +150,7 @@ def _get_repo_collaborators_for_multiple_repos(
                 # The `or []` is because `.nodes` can be None. See:
                 # https://docs.github.com/en/graphql/reference/objects#teamrepositoryconnection # TODO check
                 for collab in collaborators.nodes or []:
-                    collab_urls.append(collab['url'])
+                    collab_users.append(collab)
 
                 # The `or []` is because `.edges` can be None.
                 for perm in collaborators.edges or []:
@@ -168,8 +169,8 @@ def _get_repo_collaborators_for_multiple_repos(
                     raise RuntimeError(f"GitHub returned a None collaborator url for repo {repo_name}, retries exhausted.")
                 sleep(current_try ** 2)
 
-        # Shape = [(collab_url, 'WRITE'), ...]]
-        result[repo_name] = [(url, perm) for url, perm in zip(collab_urls, collab_permission)]
+        # Shape = [(user, ('WRITE', 'DIRECT')), ...]] # TODO why not just add perm + affiliation to the user object here?
+        result[repo_url] = [(user, (perm, affiliation)) for user, perm in zip(collab_users, collab_permission)]
     return result
 
 
@@ -211,8 +212,9 @@ def get(token: str, api_url: str, organization: str) -> List[Dict]:
     return repos.nodes
 
 
-def transform(repos_json: List[Dict]) -> Dict:
+def transform(repos_json: List[Dict], direct_collaborators: dict[str, List[Tuple]], outside_collaborators: dict[str, List[Tuple]]) -> Dict:
     """
+    TODO update docs
     Parses the JSON returned from GitHub API to create data for graph ingestion
     :param repos_json: the list of individual repository nodes from GitHub. See tests.data.github.repos.GET_REPOS for
     data shape.
@@ -223,7 +225,10 @@ def transform(repos_json: List[Dict]) -> Dict:
     transformed_repo_languages: List[Dict] = []
     transformed_repo_owners: List[Dict] = []
     # See https://docs.github.com/en/graphql/reference/enums#repositorypermission
-    transformed_collaborators: Dict[str, List[Any]] = {
+    transformed_outside_collaborators: Dict[str, List[Any]] = {
+        'ADMIN': [], 'MAINTAIN': [], 'READ': [], 'TRIAGE': [], 'WRITE': [],
+    }
+    transformed_direct_collaborators: Dict[str, List[Any]] = {
         'ADMIN': [], 'MAINTAIN': [], 'READ': [], 'TRIAGE': [], 'WRITE': [],
     }
     transformed_requirements_files: List[Dict] = []
@@ -231,14 +236,16 @@ def transform(repos_json: List[Dict]) -> Dict:
         _transform_repo_languages(repo_object['url'], repo_object, transformed_repo_languages)
         _transform_repo_objects(repo_object, transformed_repo_list)
         _transform_repo_owners(repo_object['owner']['url'], repo_object, transformed_repo_owners)
-        _transform_collaborators(repo_object['collaborators'], repo_object['url'], transformed_collaborators)
+        _transform_collaborators(repo_object['url'], outside_collaborators[repo_object['url']], transformed_outside_collaborators)
+        _transform_collaborators(repo_object['url'], direct_collaborators[repo_object['url']], transformed_direct_collaborators)
         _transform_requirements_txt(repo_object['requirements'], repo_object['url'], transformed_requirements_files)
         _transform_setup_cfg_requirements(repo_object['setupCfg'], repo_object['url'], transformed_requirements_files)
     results = {
         'repos': transformed_repo_list,
         'repo_languages': transformed_repo_languages,
         'repo_owners': transformed_repo_owners,
-        'repo_collaborators': transformed_collaborators,
+        'repo_outside_collaborators': transformed_outside_collaborators,
+        'repo_direct_collaborators': transformed_direct_collaborators,
         'python_requirements': transformed_requirements_files,
     }
     return results
@@ -329,22 +336,37 @@ def _transform_repo_languages(repo_url: str, repo: Dict, repo_languages: List[Di
             })
 
 
-def _transform_collaborators(collaborators: Dict, repo_url: str, transformed_collaborators: Dict) -> None:
+def _transform_collaborators(repo_url: str, collaborators: List[Tuple], transformed_collaborators: Dict) -> None:
     """
     Performs data adjustments for outside collaborators in a GitHub repo.
     Output data shape = [{permission, repo_url, url (the user's URL), login, name}, ...]
-    :param collaborators: See cartography.tests.data.github.repos for data shape.
+    :param collaborators: See cartography.tests.data.github.repos for data shape. TODO update
+        direct_/outside_collaborators now a list of tuples where each tuple is (user, permission, affiliation)
     :param repo_url: The URL of the GitHub repo.
     :param transformed_collaborators: Output dict. Data shape =
     {'ADMIN': [{ user }, ...], 'MAINTAIN': [{ user }, ...], 'READ': [ ... ], 'TRIAGE': [ ... ], 'WRITE': [ ... ]}
     :return: Nothing.
     """
-    # `collaborators` is sometimes None
+
+    # # `collaborators` is sometimes None
+    # if collaborators:
+    #     for idx, user in enumerate(collaborators['nodes']):
+    #         user_permission = collaborators['edges'][idx]['permission']
+    #         user['repo_url'] = repo_url
+    #         transformed_collaborators[user_permission].append(user)
+
+    # sometimes empty/None
     if collaborators:
-        for idx, user in enumerate(collaborators['nodes']):
-            user_permission = collaborators['edges'][idx]['permission']
+        for user, (permission, affiliation) in collaborators:
             user['repo_url'] = repo_url
-            transformed_collaborators[user_permission].append(user)
+            user['affiliation'] = affiliation
+            transformed_collaborators[permission].append(user)
+    # # sometimes empty/None
+    # if outside_collaborators:
+    #     for user, (permission, affiliation) in outside_collaborators:
+    #         user['repo_url'] = repo_url
+    #         user['affiliation'] = affiliation
+    #         transformed_collaborators[permission].append(user)
 
 
 def _transform_requirements_txt(
@@ -582,7 +604,7 @@ def load_github_owners(neo4j_session: neo4j.Session, update_tag: int, repo_owner
 
 
 @timeit
-def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborators: Dict) -> None:
+def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborators: Dict, affiliation: str) -> None:
     query = Template("""
     UNWIND $UserData as user
 
@@ -602,7 +624,7 @@ def load_collaborators(neo4j_session: neo4j.Session, update_tag: int, collaborat
     SET o.lastupdated = $UpdateTag
     """)
     for collab_type in collaborators.keys():
-        relationship_label = f"OUTSIDE_COLLAB_{collab_type}"
+        relationship_label = f"{affiliation}_COLLAB_{collab_type}"
         neo4j_session.run(
             query.safe_substitute(rel_label=relationship_label),
             UserData=collaborators[collab_type],
@@ -615,7 +637,8 @@ def load(neo4j_session: neo4j.Session, common_job_parameters: Dict, repo_data: D
     load_github_repos(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repos'])
     load_github_owners(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_owners'])
     load_github_languages(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_languages'])
-    load_collaborators(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_collaborators'])
+    load_collaborators(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_direct_collaborators'], 'DIRECT')
+    load_collaborators(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_outside_collaborators'], 'OUTSIDE')
     load_python_requirements(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['python_requirements'])
 
 
@@ -663,7 +686,6 @@ def sync(
     repos_json = get(github_api_key, github_url, organization)
     direct_collabs = _get_repo_collaborators_for_multiple_repos(repos_json, "DIRECT", organization, github_url, github_api_key)
     outside_collabs = _get_repo_collaborators_for_multiple_repos(repos_json, "OUTSIDE", organization, github_url, github_api_key)
-    print("hi")
-    repo_data = transform(repos_json)
+    repo_data = transform(repos_json, direct_collabs, outside_collabs)
     load(neo4j_session, common_job_parameters, repo_data)
     run_cleanup_job('github_repos_cleanup.json', neo4j_session, common_job_parameters)
