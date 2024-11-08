@@ -7,7 +7,10 @@ from typing import Tuple
 
 import neo4j
 
+from cartography.client.core.tx import load
 from cartography.intel.github.util import fetch_all
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.github.users import GitHubOrganizationUserSchema, GitHubUnaffiliatedUserSchema
 from cartography.stats import get_stats_client
 from cartography.util import merge_module_sync_metadata
 from cartography.util import run_cleanup_job
@@ -74,7 +77,7 @@ GITHUB_ENTERPRISE_OWNER_USERS_PAGINATED_GRAPHQL = """
 
 
 @timeit
-def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], Dict]:
+def _get_users_raw(token: str, api_url: str, organization: str) -> Tuple[List[Dict], Dict]:
     """
     Retrieve a list of users from the given GitHub organization as described in
     https://docs.github.com/en/graphql/reference/objects#organizationmemberedge.
@@ -84,7 +87,7 @@ def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], 
     :return: A 2-tuple containing
         1. a list of dicts representing users and
         2. data on the owning GitHub organization
-        see tests.data.github.users.GITHUB_ORG_DATA for shape of both
+        see tests.data.github.users.GITHUB_USER_DATA for shape of both
     """
     users, org = fetch_all(
         token,
@@ -98,7 +101,15 @@ def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], 
 
 def _get_enterprise_owners_raw(token: str, api_url: str, organization: str) -> Tuple[List[Dict], Dict]:
     """
-    Function broken out for testing purposes.  See 'get_enterprise_owners' for docs.
+    Retrieve a list of enterprise owners from the given GitHub organization as described in
+    https://docs.github.com/en/graphql/reference/objects#organizationenterpriseowneredge.
+    :param token: The Github API token as string.
+    :param api_url: The Github v4 API endpoint as string.
+    :param organization: The name of the target Github organization as string.
+    :return: A 2-tuple containing
+        1. a list of dicts representing users who are enterprise owners
+        3. data on the owning GitHub organization
+        see tests.data.github.users.GITHUB_ENTERPRISE_OWNER_DATA for shape
     """
     owners, org = fetch_all(
         token,
@@ -109,180 +120,93 @@ def _get_enterprise_owners_raw(token: str, api_url: str, organization: str) -> T
     )
     return owners.edges, org
 
-
 @timeit
-def get_enterprise_owners(token: str, api_url: str, organization: str) -> Tuple[List[Dict], List[Dict], Dict]:
+def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], List[Dict], Dict]:
     """
-    Retrieve a list of enterprise owners from the given GitHub organization as described in
-    https://docs.github.com/en/graphql/reference/objects#organizationenterpriseowneredge.
+    Retrieve all users:
+    * organization users (users directly affiliated with an organization)
+    * unaffiliated users (user who, for example, are enterprise owners but not members of the target organization).
+
     :param token: The Github API token as string.
     :param api_url: The Github v4 API endpoint as string.
     :param organization: The name of the target Github organization as string.
-    :return: A 3-tuple containing
-        1. a list of dicts representing enterprise owners who are also users in the organization
-        2. a list of dicts representing enterprise owners who are not users in the organization
+    :return: A 2-tuple containing
+        1. a list of dicts representing users who are affiliated with the target org
+           see tests.data.github.users.GITHUB_USER_DATA for shape
+        2. a list of dicts representing users who are not affiliated (e.g. enterprise owners who are not also in
+           the target org) — see tests.data.github.users.GITHUB_ENTERPRISE_OWNER_DATA for shape
         3. data on the owning GitHub organization
-        see tests.data.github.users.GITHUB_ENTERPRISE_OWNER_DATA for shape
     """
+
+    users, org = _get_users_raw(token, api_url, organization)
+    users_dict = {}
+    for user in users:
+        processed_user = deepcopy(user['node'])
+        processed_user['role'] = user['role']
+        processed_user['hasTwoFactorEnabled'] = user['hasTwoFactorEnabled']
+        processed_user['MEMBER_OF'] = org['url']
+        users_dict[processed_user['url']] = processed_user
+
     owners, org = _get_enterprise_owners_raw(token, api_url, organization)
-    unaffiliated_owners = []
-    affiliated_owners = []
+    owners_dict = {}
     for owner in owners:
+        processed_owner = deepcopy(owner['node'])
+        processed_owner['isEnterpriseOwner'] = True
         if owner['organizationRole'] == 'UNAFFILIATED':
-            unaffiliated_owners.append(owner)
+            processed_owner['UNAFFILIATED'] = org['url']
         else:
-            affiliated_owners.append(owner)
-    return affiliated_owners, unaffiliated_owners, org
+            processed_owner['MEMBER_OF'] = org['url']
+        owners_dict[processed_owner['url']] = processed_owner
 
+    affiliated_users = [] # users affiliated with the target org
+    for url, user in users_dict.items():
+        user['isEnterpriseOwner'] = url in owners_dict
+        affiliated_users.append(user)
 
-def _mark_users_as_enterprise_owners(
-        user_data: List[Dict],
-        user_org_data: Dict,
-        affiliated_owner_data: List[Dict],
-        owner_org_data: Dict,
-) -> list[Dict]:
-    """
-    :param user_data: A list of dicts representing users - see tests.data.github.users.GITHUB_USER_DATA for shape.
-    :param user_org_data: A dict representing the organization for the user_data
-        see tests.data.github.users.GITHUB_ORG_DATA for shape.
-    :param affiliated_owner_data: A list of dicts representing affiliated enterprise owners
-        (owners who are also users in the org) - see tests.data.github.users.GITHUB_ENTERPRISE_OWNER_DATA for shape.
-    :param owner_org_data: A dict representing the organization for the owner data
-        see tests.data.github.users.GITHUB_ORG_DATA for shape.
-    :return: A new list of user_data dicts updated with a new property, isEnterpriseOwner
-    """
+    unaffiliated_users = [] # users not affiliated with the target org
+    for url, owner in owners_dict.items():
+        if url not in users_dict:
+            unaffiliated_users.append(owner)
 
-    # Guarding against accidental mixing of data from different orgs.  Since user data and owner data are queried
-    # separately, there is at least a possibility of callers attempting to join data from different orgs.
-    if user_org_data['url'] != owner_org_data['url']:
-        raise ValueError(f"Organization URLs do not match: {user_org_data['url']} != {owner_org_data['url']}")
-    if user_org_data['login'] != owner_org_data['login']:
-        raise ValueError(f"Organization logins do not match: {user_org_data['login']} != {owner_org_data['login']}")
-
-    result = []
-    owner_urls = {entry['node']['url'] for entry in affiliated_owner_data}
-    for user in user_data:
-        user_copy = deepcopy(user)
-        user_copy['node']['isEnterpriseOwner'] = user['node']['url'] in owner_urls
-        result.append(user_copy)
-    return result
+    return affiliated_users, unaffiliated_users, org
 
 
 @timeit
-def load_organization_users(
-    neo4j_session: neo4j.Session, user_data: List[Dict], org_data: Dict,
+def load_users(
+    neo4j_session: neo4j.Session,
+    node_schema: CartographyNodeSchema,
+    user_data: List[Dict],
+    org_data: Dict,
     update_tag: int,
 ) -> None:
-    query = """
-    MERGE (org:GitHubOrganization{id: $OrgUrl})
-    ON CREATE SET org.firstseen = timestamp()
-    SET org.username = $OrgLogin,
-    org.lastupdated = $UpdateTag
-    WITH org
-
-    UNWIND $UserData as user
-
-    MERGE (u:GitHubUser{id: user.node.url})
-    ON CREATE SET u.firstseen = timestamp()
-    SET u.fullname = user.node.name,
-    u.username = user.node.login,
-    u.has_2fa_enabled = user.hasTwoFactorEnabled,
-    u.role = user.role,
-    u.is_site_admin = user.node.isSiteAdmin,
-    u.is_enterprise_owner = user.node.isEnterpriseOwner,
-    u.email = user.node.email,
-    u.company = user.node.company,
-    u.lastupdated = $UpdateTag
-
-    MERGE (u)-[r:MEMBER_OF]->(org)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $UpdateTag
-    """
-    neo4j_session.run(
-        query,
-        OrgUrl=org_data['url'],
-        OrgLogin=org_data['login'],
-        UserData=user_data,
-        UpdateTag=update_tag,
-    )
-
-
-@timeit
-def load_unaffiliated_owners(
-    neo4j_session: neo4j.Session, owner_data: List[Dict], org_data: Dict,
-    update_tag: int,
-) -> None:
-    """
-    The owner_data here represents users who are enterprise owners but are not in the target org.
-    Note the subtle differences between what is loaded here and in load_organization_users:
-    1. The user-org relationship is set to UNAFFILIATED
-    2. 'role' is not set: these users have no role in the organization (i.e. they are neither 'MEMBER' nor 'ADMIN').
-    3. 'has_2fa_enabled' is not set (it is unavailable from the GraphQL query for these owners)
-    4. 'is_enterprise_owner' is set to TRUE
-
-    If the user does already exist in the graph (perhaps they are members of other orgs) then this merge will
-    update the user's node but leave 'role' and 'has_2fa_enabled' untouched.
-    """
-    query = """
-    MERGE (org:GitHubOrganization{id: $OrgUrl})
-    ON CREATE SET org.firstseen = timestamp()
-    SET org.username = $OrgLogin,
-    org.lastupdated = $UpdateTag
-    WITH org
-
-    UNWIND $UserData as user
-
-    MERGE (u:GitHubUser{id: user.node.url})
-    ON CREATE SET u.firstseen = timestamp()
-    SET u.fullname = user.node.name,
-    u.username = user.node.login,
-    u.is_site_admin = user.node.isSiteAdmin,
-    u.is_enterprise_owner = TRUE,
-    u.email = user.node.email,
-    u.company = user.node.company,
-    u.lastupdated = $UpdateTag
-
-    MERGE (u)-[r:UNAFFILIATED]->(org)
-    ON CREATE SET r.firstseen = timestamp()
-    SET r.lastupdated = $UpdateTag
-    """
-    neo4j_session.run(
-        query,
-        OrgUrl=org_data['url'],
-        OrgLogin=org_data['login'],
-        UserData=owner_data,
-        UpdateTag=update_tag,
+    logger.info(f"Loading {len(user_data)} GitHub users to the graph")
+    load(
+        neo4j_session,
+        node_schema,
+        user_data,
+        lastupdated=update_tag,
+        org_url=org_data['url'],
     )
 
 
 @timeit
 def sync(
         neo4j_session: neo4j.Session,
-        common_job_parameters: Dict[str, Any],
+        common_job_parameters: Dict,
         github_api_key: str,
         github_url: str,
         organization: str,
 ) -> None:
     logger.info("Syncing GitHub users")
-    user_data, user_org_data = get_users(github_api_key, github_url, organization)
-    affiliated_owner_data, unaffiliated_owner_data, owner_org_data = get_enterprise_owners(
-        github_api_key,
-        github_url, organization,
-    )
-    processed_user_data = _mark_users_as_enterprise_owners(
-        user_data, user_org_data,
-        affiliated_owner_data, owner_org_data,
-    )
-    load_organization_users(neo4j_session, processed_user_data, user_org_data, common_job_parameters['UPDATE_TAG'])
-    load_unaffiliated_owners(
-        neo4j_session, unaffiliated_owner_data,
-        owner_org_data, common_job_parameters['UPDATE_TAG'],
-    )
+    affiliated_user_data, unaffiliated_user_data, org_data = get_users(github_api_key, github_url, organization)
+    load_users(neo4j_session, GitHubOrganizationUserSchema(), affiliated_user_data, org_data, common_job_parameters['UPDATE_TAG'])
+    load_users(neo4j_session, GitHubUnaffiliatedUserSchema(), unaffiliated_user_data, org_data, common_job_parameters['UPDATE_TAG'])
+    # no automated cleanup job because user has no sub_resource_relationship
     run_cleanup_job('github_users_cleanup.json', neo4j_session, common_job_parameters)
     merge_module_sync_metadata(
         neo4j_session,
         group_type='GitHubOrganization',
-        group_id=user_org_data['url'],
+        group_id=org_data['url'],
         synced_type='GitHubOrganization',
         update_tag=common_job_parameters['UPDATE_TAG'],
         stat_handler=stat_handler,
