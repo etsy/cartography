@@ -42,7 +42,8 @@ from cartography.models.core.relationships import TargetNodeMatcher
 
 
 @dataclass(frozen=True)
-class GitHubOrganizationUserNodeProperties(CartographyNodeProperties):
+class BaseGitHubUserNodeProperties(CartographyNodeProperties):
+    # core properties in all GitHubUser nodes
     id: PropertyRef = PropertyRef('url')
     lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
     fullname: PropertyRef = PropertyRef('name')
@@ -51,22 +52,20 @@ class GitHubOrganizationUserNodeProperties(CartographyNodeProperties):
     is_enterprise_owner: PropertyRef = PropertyRef('isEnterpriseOwner')
     email: PropertyRef = PropertyRef('email')
     company: PropertyRef = PropertyRef('company')
+
+
+@dataclass(frozen=True)
+class GitHubOrganizationUserNodeProperties(BaseGitHubUserNodeProperties):
+    # specified for affiliated users only. The GitHub api does not return this property for unaffiliated users.
     has_2fa_enabled: PropertyRef = PropertyRef('hasTwoFactorEnabled')
+    # specified for affiliated uers only.  Unaffiliated users do not have a 'role' in the target organization.
     role: PropertyRef = PropertyRef('role')
 
 
 @dataclass(frozen=True)
-class GitHubUnaffiliatedUserNodeProperties(CartographyNodeProperties):
-    id: PropertyRef = PropertyRef('url')
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
-    fullname: PropertyRef = PropertyRef('name')
-    username: PropertyRef = PropertyRef('login', extra_index=True)
-    is_site_admin: PropertyRef = PropertyRef('isSiteAdmin')
-    is_enterprise_owner: PropertyRef = PropertyRef('isEnterpriseOwner')
-    email: PropertyRef = PropertyRef('email')
-    company: PropertyRef = PropertyRef('company')
-    # 'has_2fa_enabled' not specified for unaffiliated; GitHub api does not return this property for them
-    # 'role' not specified for unaffiliated; they do not have a role in the target organization
+class GitHubUnaffiliatedUserNodeProperties(BaseGitHubUserNodeProperties):
+    # No additional properties needed
+    pass
 
 
 @dataclass(frozen=True)
