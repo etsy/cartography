@@ -10,7 +10,9 @@ import neo4j
 from cartography.client.core.tx import load
 from cartography.intel.github.util import fetch_all
 from cartography.models.core.nodes import CartographyNodeSchema
-from cartography.models.github.users import GitHubOrganizationUserSchema, GitHubUnaffiliatedUserSchema
+from cartography.models.github.orgs import GitHubOrganizationSchema
+from cartography.models.github.users import GitHubOrganizationUserSchema
+from cartography.models.github.users import GitHubUnaffiliatedUserSchema
 from cartography.stats import get_stats_client
 from cartography.util import merge_module_sync_metadata
 from cartography.util import run_cleanup_job
@@ -120,6 +122,7 @@ def _get_enterprise_owners_raw(token: str, api_url: str, organization: str) -> T
     )
     return owners.edges, org
 
+
 @timeit
 def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], List[Dict], Dict]:
     """
@@ -158,12 +161,12 @@ def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], 
             processed_owner['MEMBER_OF'] = org['url']
         owners_dict[processed_owner['url']] = processed_owner
 
-    affiliated_users = [] # users affiliated with the target org
+    affiliated_users = []  # users affiliated with the target org
     for url, user in users_dict.items():
         user['isEnterpriseOwner'] = url in owners_dict
         affiliated_users.append(user)
 
-    unaffiliated_users = [] # users not affiliated with the target org
+    unaffiliated_users = []  # users not affiliated with the target org
     for url, owner in owners_dict.items():
         if url not in users_dict:
             unaffiliated_users.append(owner)
@@ -190,6 +193,22 @@ def load_users(
 
 
 @timeit
+def load_organization(
+    neo4j_session: neo4j.Session,
+    node_schema: CartographyNodeSchema,
+    org_data: List[Dict[str, Any]],
+    update_tag: int,
+) -> None:
+    logger.info(f"Loading {len(org_data)} GitHub organization to the graph")
+    load(
+        neo4j_session,
+        node_schema,
+        org_data,
+        lastupdated=update_tag,
+    )
+
+
+@timeit
 def sync(
         neo4j_session: neo4j.Session,
         common_job_parameters: Dict,
@@ -199,10 +218,20 @@ def sync(
 ) -> None:
     logger.info("Syncing GitHub users")
     affiliated_user_data, unaffiliated_user_data, org_data = get_users(github_api_key, github_url, organization)
-    load_users(neo4j_session, GitHubOrganizationUserSchema(), affiliated_user_data, org_data, common_job_parameters['UPDATE_TAG'])
-    load_users(neo4j_session, GitHubUnaffiliatedUserSchema(), unaffiliated_user_data, org_data, common_job_parameters['UPDATE_TAG'])
-    # no automated cleanup job because user has no sub_resource_relationship
-    run_cleanup_job('github_users_cleanup.json', neo4j_session, common_job_parameters)
+    load_organization(
+        neo4j_session, GitHubOrganizationSchema(), [org_data],
+        common_job_parameters['UPDATE_TAG'],
+    )
+    load_users(
+        neo4j_session, GitHubOrganizationUserSchema(), affiliated_user_data, org_data,
+        common_job_parameters['UPDATE_TAG'],
+    )
+    load_users(
+        neo4j_session, GitHubUnaffiliatedUserSchema(), unaffiliated_user_data, org_data,
+        common_job_parameters['UPDATE_TAG'],
+    )
+    # no automated cleanup job for users because user node has no sub_resource_relationship
+    run_cleanup_job('github_org_and_users_cleanup.json', neo4j_session, common_job_parameters)
     merge_module_sync_metadata(
         neo4j_session,
         group_type='GitHubOrganization',

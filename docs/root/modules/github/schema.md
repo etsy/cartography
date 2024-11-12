@@ -87,6 +87,12 @@ Representation of a single GitHubOrganization [organization object](https://deve
     (GitHubOrganization)-[RESOURCE]->(GitHubTeam)
     ```
 
+- GitHubUsers are members of an organization.  In some cases there may be a user who is "unaffiliated" with an org, for example if the user is an enterprise owner, but not member of, the org.
+
+    ```
+    (GitHubUser)-[MEMBER_OF|UNAFFILIATED]->(GitHubOrganization)
+    ```
+
 
 ### GitHubTeam
 

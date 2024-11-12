@@ -1,20 +1,7 @@
-from dataclasses import dataclass
-from typing import Optional
-
-from cartography.models.core.common import PropertyRef
-from cartography.models.core.nodes import CartographyNodeProperties
-from cartography.models.core.nodes import CartographyNodeSchema
-from cartography.models.core.relationships import CartographyRelProperties
-from cartography.models.core.relationships import CartographyRelSchema
-from cartography.models.core.relationships import LinkDirection
-from cartography.models.core.relationships import make_target_node_matcher
-from cartography.models.core.relationships import OtherRelationships
-from cartography.models.core.relationships import TargetNodeMatcher
-
 """
 RE: Tenant relationship between GitHubUser and GitHubOrganization
 
-Note this relationship is implemented via 'other_relationships' and not via the 'sub_resource_relationship' 
+Note this relationship is implemented via 'other_relationships' and not via the 'sub_resource_relationship'
 as might be expected.
 
 The 'sub_resource_relationship' typically describes the relationship of a node to its tenant (the org, project, or
@@ -22,9 +9,10 @@ other resource to which other nodes belong).  An assumption of that relationship
 away, all nodes related to it should be cleaned up.
 
 In GitHub, though the GitHubUser's tenant seems to be GitHubOrganization, users actually exist independently.  There
-is a concept of 'UNAFFILIATED' users, like Enterprise Owners who are related to an org even if they are not direct
-members of it.  You would not want them to be cleaned up, if an org goes away, and you could want them in your graph
-even if they are not members of any org in the enterprise.
+is a concept of 'UNAFFILIATED' users (https://docs.github.com/en/graphql/reference/enums#roleinorganization) like
+Enterprise Owners who are related to an org even if they are not direct members of it.  You would not want them to be
+cleaned up, if an org goes away, and you could want them in your graph even if they are not members of any org in
+the enterprise.
 
 To allow for this in the schema, this relationship is treated as any other node-to-node relationship, via
 'other_relationships', instead of as the typical 'sub_resource_relationship'.
@@ -39,11 +27,18 @@ but there are two schemas below to allow for some differences between them, e.g.
 The main importance of having two schemas is to allow the two sets of users to be loaded separately.  If we are loading
 an unaffiliated user, but the user already exists in the graph (perhaps they are members of another GitHub orgs for
 example), then loading the unaffiliated user will not blank out the 'role' and 'has_2fa_enabled' properties.
-
-See:
-* https://docs.github.com/en/graphql/reference/enums#roleinorganization
-* https://docs.github.com/en/enterprise-cloud@latest/admin/managing-accounts-and-repositories/managing-users-in-your-enterprise/roles-in-an-enterprise#enterprise-owners
 """
+from dataclasses import dataclass
+
+from cartography.models.core.common import PropertyRef
+from cartography.models.core.nodes import CartographyNodeProperties
+from cartography.models.core.nodes import CartographyNodeSchema
+from cartography.models.core.relationships import CartographyRelProperties
+from cartography.models.core.relationships import CartographyRelSchema
+from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import make_target_node_matcher
+from cartography.models.core.relationships import OtherRelationships
+from cartography.models.core.relationships import TargetNodeMatcher
 
 
 @dataclass(frozen=True)
@@ -59,6 +54,7 @@ class GitHubOrganizationUserNodeProperties(CartographyNodeProperties):
     has_2fa_enabled: PropertyRef = PropertyRef('hasTwoFactorEnabled')
     role: PropertyRef = PropertyRef('role')
 
+
 @dataclass(frozen=True)
 class GitHubUnaffiliatedUserNodeProperties(CartographyNodeProperties):
     id: PropertyRef = PropertyRef('url')
@@ -71,6 +67,7 @@ class GitHubUnaffiliatedUserNodeProperties(CartographyNodeProperties):
     company: PropertyRef = PropertyRef('company')
     # 'has_2fa_enabled' not specified for unaffiliated; GitHub api does not return this property for them
     # 'role' not specified for unaffiliated; they do not have a role in the target organization
+
 
 @dataclass(frozen=True)
 class GitHubUserToOrganizationRelProperties(CartographyRelProperties):
