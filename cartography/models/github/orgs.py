@@ -9,18 +9,12 @@ from dataclasses import dataclass
 from cartography.models.core.common import PropertyRef
 from cartography.models.core.nodes import CartographyNodeProperties
 from cartography.models.core.nodes import CartographyNodeSchema
-from cartography.models.core.relationships import CartographyRelProperties
 
 
 @dataclass(frozen=True)
 class GitHubOrganizationNodeProperties(CartographyNodeProperties):
     id: PropertyRef = PropertyRef('url')
     username: PropertyRef = PropertyRef('login', extra_index=True)
-    lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
-
-
-@dataclass(frozen=True)
-class GitHubUserToOrganizationRelProperties(CartographyRelProperties):
     lastupdated: PropertyRef = PropertyRef('lastupdated', set_in_kwargs=True)
 
 
