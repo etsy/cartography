@@ -9,7 +9,6 @@ import neo4j
 
 from cartography.client.core.tx import load
 from cartography.intel.github.util import fetch_all
-from cartography.models.core.nodes import CartographyNodeSchema
 from cartography.models.github.orgs import GitHubOrganizationSchema
 from cartography.models.github.users import GitHubOrganizationUserSchema
 from cartography.models.github.users import GitHubUnaffiliatedUserSchema
@@ -175,7 +174,7 @@ def transform_users(user_data: List[Dict], owners_data: List[Dict], org_data: Di
 @timeit
 def load_users(
     neo4j_session: neo4j.Session,
-    node_schema: CartographyNodeSchema,
+    node_schema: GitHubOrganizationUserSchema | GitHubUnaffiliatedUserSchema,
     user_data: List[Dict],
     org_data: Dict,
     update_tag: int,
@@ -193,7 +192,7 @@ def load_users(
 @timeit
 def load_organization(
     neo4j_session: neo4j.Session,
-    node_schema: CartographyNodeSchema,
+    node_schema: GitHubOrganizationSchema,
     org_data: List[Dict[str, Any]],
     update_tag: int,
 ) -> None:
