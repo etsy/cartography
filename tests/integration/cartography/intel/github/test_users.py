@@ -12,8 +12,8 @@ TEST_GITHUB_ORG = GITHUB_ORG_DATA['login']
 FAKE_API_KEY = 'asdf'
 
 
-@patch.object(cartography.intel.github.users, '_get_users_raw', return_value=GITHUB_USER_DATA)
-@patch.object(cartography.intel.github.users, '_get_enterprise_owners_raw', return_value=GITHUB_ENTERPRISE_OWNER_DATA)
+@patch.object(cartography.intel.github.users, 'get_users', return_value=GITHUB_USER_DATA)
+@patch.object(cartography.intel.github.users, 'get_enterprise_owners', return_value=GITHUB_ENTERPRISE_OWNER_DATA)
 def test_sync(mock_owners, mock_users, neo4j_session):
     # Arrange
     # No need to 'arrange' data here.  The patched functions return all the data needed.

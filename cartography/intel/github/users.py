@@ -79,7 +79,7 @@ GITHUB_ENTERPRISE_OWNER_USERS_PAGINATED_GRAPHQL = """
 
 
 @timeit
-def _get_users_raw(token: str, api_url: str, organization: str) -> Tuple[List[Dict], Dict]:
+def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], Dict]:
     """
     Retrieve a list of users from the given GitHub organization as described in
     https://docs.github.com/en/graphql/reference/objects#organizationmemberedge.
@@ -101,7 +101,7 @@ def _get_users_raw(token: str, api_url: str, organization: str) -> Tuple[List[Di
     return users.edges, org
 
 
-def _get_enterprise_owners_raw(token: str, api_url: str, organization: str) -> Tuple[List[Dict], Dict]:
+def get_enterprise_owners(token: str, api_url: str, organization: str) -> Tuple[List[Dict], Dict]:
     """
     Retrieve a list of enterprise owners from the given GitHub organization as described in
     https://docs.github.com/en/graphql/reference/objects#organizationenterpriseowneredge.
@@ -124,10 +124,10 @@ def _get_enterprise_owners_raw(token: str, api_url: str, organization: str) -> T
 
 
 @timeit
-def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], List[Dict], Dict]:
+def transform_users(user_data: List[Dict], owners_data: List[Dict], org_data: Dict) -> Tuple[List[Dict], List[Dict]]:
     """
-    Retrieve all users:
-    * organization users (users directly affiliated with an organization)
+    Taking raw user and owner data, return two lists of processed user data:
+    * organization users aka affiliated users (users directly affiliated with an organization)
     * unaffiliated users (user who, for example, are enterprise owners but not members of the target organization).
 
     :param token: The Github API token as string.
@@ -141,24 +141,22 @@ def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], 
         3. data on the owning GitHub organization
     """
 
-    users, org = _get_users_raw(token, api_url, organization)
     users_dict = {}
-    for user in users:
+    for user in user_data:
         processed_user = deepcopy(user['node'])
         processed_user['role'] = user['role']
         processed_user['hasTwoFactorEnabled'] = user['hasTwoFactorEnabled']
-        processed_user['MEMBER_OF'] = org['url']
+        processed_user['MEMBER_OF'] = org_data['url']
         users_dict[processed_user['url']] = processed_user
 
-    owners, org = _get_enterprise_owners_raw(token, api_url, organization)
     owners_dict = {}
-    for owner in owners:
+    for owner in owners_data:
         processed_owner = deepcopy(owner['node'])
         processed_owner['isEnterpriseOwner'] = True
         if owner['organizationRole'] == 'UNAFFILIATED':
-            processed_owner['UNAFFILIATED'] = org['url']
+            processed_owner['UNAFFILIATED'] = org_data['url']
         else:
-            processed_owner['MEMBER_OF'] = org['url']
+            processed_owner['MEMBER_OF'] = org_data['url']
         owners_dict[processed_owner['url']] = processed_owner
 
     affiliated_users = []  # users affiliated with the target org
@@ -171,7 +169,7 @@ def get_users(token: str, api_url: str, organization: str) -> Tuple[List[Dict], 
         if url not in users_dict:
             unaffiliated_users.append(owner)
 
-    return affiliated_users, unaffiliated_users, org
+    return affiliated_users, unaffiliated_users
 
 
 @timeit
@@ -217,17 +215,21 @@ def sync(
         organization: str,
 ) -> None:
     logger.info("Syncing GitHub users")
-    affiliated_user_data, unaffiliated_user_data, org_data = get_users(github_api_key, github_url, organization)
+    user_data, org_data = get_users(github_api_key, github_url, organization)
+    owners_data, org_data = get_enterprise_owners(github_api_key, github_url, organization)
+    processed_affiliated_user_data, processed_unaffiliated_user_data = (
+        transform_users(user_data, owners_data, org_data)
+    )
     load_organization(
         neo4j_session, GitHubOrganizationSchema(), [org_data],
         common_job_parameters['UPDATE_TAG'],
     )
     load_users(
-        neo4j_session, GitHubOrganizationUserSchema(), affiliated_user_data, org_data,
+        neo4j_session, GitHubOrganizationUserSchema(), processed_affiliated_user_data, org_data,
         common_job_parameters['UPDATE_TAG'],
     )
     load_users(
-        neo4j_session, GitHubUnaffiliatedUserSchema(), unaffiliated_user_data, org_data,
+        neo4j_session, GitHubUnaffiliatedUserSchema(), processed_unaffiliated_user_data, org_data,
         common_job_parameters['UPDATE_TAG'],
     )
     # no automated cleanup job for users because user node has no sub_resource_relationship
