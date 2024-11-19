@@ -87,7 +87,7 @@ Representation of a single GitHubOrganization [organization object](https://deve
     (GitHubOrganization)-[RESOURCE]->(GitHubTeam)
     ```
 
-- GitHubUsers are members of an organization.  In some cases there may be a user who is "unaffiliated" with an org, for example if the user is an enterprise owner, but not member of, the org.
+- GitHubUsers are members of an organization.  In some cases there may be a user who is "unaffiliated" with an org, for example if the user is an enterprise owner, but not member of, the org.  [Enterprise owners](https://docs.github.com/en/enterprise-cloud@latest/admin/managing-accounts-and-repositories/managing-users-in-your-enterprise/roles-in-an-enterprise#enterprise-owners) have complete control over the enterprise (i.e. they can manage all enterprise settings, members, and policies) yet may not show up on member lists of the GitHub org.
 
     ```
     (GitHubUser)-[MEMBER_OF|UNAFFILIATED]->(GitHubOrganization)
@@ -158,7 +158,7 @@ WRITE, MAINTAIN, TRIAGE, and READ ([Reference](https://docs.github.com/en/graphq
     (GitHubUser)-[:OUTSIDE_COLLAB_{ACTION}]->(GitHubRepository)
     ```
 
-- GitHubUsers are members of an organization.  In some cases there may be a user who is "unaffiliated" with an org, for example if the user is an enterprise owner, but not member of, the org.
+- GitHubUsers are members of an organization.  In some cases there may be a user who is "unaffiliated" with an org, for example if the user is an enterprise owner, but not member of, the org.  [Enterprise owners](https://docs.github.com/en/enterprise-cloud@latest/admin/managing-accounts-and-repositories/managing-users-in-your-enterprise/roles-in-an-enterprise#enterprise-owners) have complete control over the enterprise (i.e. they can manage all enterprise settings, members, and policies) yet may not show up on member lists of the GitHub org.
 
     ```
     (GitHubUser)-[MEMBER_OF|UNAFFILIATED]->(GitHubOrganization)
