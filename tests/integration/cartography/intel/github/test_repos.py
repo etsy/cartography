@@ -222,6 +222,8 @@ def test_repository_to_collaborators(neo4j_session):
     assert actual_nodes == expected_nodes
 
     # Ensure direct collaborators are connected to the expected repos
+    # Note how all the folks in the outside collaborators list are also in the direct collaborators list.  They
+    # have both types of relationship.
     nodes = neo4j_session.run("""
         MATCH (repo:GitHubRepository)<-[rel]-(user:GitHubUser)
         WHERE type(rel) STARTS WITH 'DIRECT_COLLAB_'
@@ -239,6 +241,31 @@ def test_repository_to_collaborators(neo4j_session):
             'SampleRepo2',
             'DIRECT_COLLAB_ADMIN',
             'direct_foo',
+        ),
+        (
+            'cartography',
+            'DIRECT_COLLAB_WRITE',
+            'marco-lancini',
+        ),
+        (
+            'cartography',
+            'DIRECT_COLLAB_READ',
+            'sachafaust',
+        ),
+        (
+            'cartography',
+            'DIRECT_COLLAB_ADMIN',
+            'SecPrez',
+        ),
+        (
+            'cartography',
+            'DIRECT_COLLAB_TRIAGE',
+            'ramonpetgrave64',
+        ),
+        (
+            'cartography',
+            'DIRECT_COLLAB_MAINTAIN',
+            'roshinis78',
         ),
         (
             'cartography',
