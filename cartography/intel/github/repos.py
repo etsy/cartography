@@ -1,10 +1,8 @@
 import configparser
 import logging
-from collections import namedtuple
 from dataclasses import dataclass
-from time import sleep
 from string import Template
-from typing import Any, Tuple
+from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -15,11 +13,11 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from cartography.intel.github.util import fetch_all
+from cartography.intel.github.util import PaginatedGraphqlData
 from cartography.util import run_cleanup_job
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
-
 
 
 @dataclass(frozen=False)
@@ -30,8 +28,8 @@ class UserAffiliationAndRepoPermission:
     - Affiliation: https://docs.github.com/en/graphql/reference/enums#collaboratoraffiliation
     """
     user: Dict
-    permission: str # WRITE, MAINTAIN, ADMIN, etc
-    affiliation: str # OUTSIDE, DIRECT
+    permission: str  # WRITE, MAINTAIN, ADMIN, etc
+    affiliation: str  # OUTSIDE, DIRECT
 
 
 GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
@@ -76,10 +74,10 @@ GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
                         login
                         __typename
                     }
-                    directCollaborators: collaborators(first: 100, affiliation: DIRECT) {        
+                    directCollaborators: collaborators(first: 100, affiliation: DIRECT) {
                         totalCount
                     }
-                    outsideCollaborators: collaborators(first: 100, affiliation: OUTSIDE) {        
+                    outsideCollaborators: collaborators(first: 100, affiliation: OUTSIDE) {
                         totalCount
                     }
                     requirements:object(expression: "HEAD:requirements.txt") {
@@ -134,6 +132,7 @@ GITHUB_REPO_COLLABS_PAGINATED_GRAPHQL = """
     }
     """
 
+
 def _get_repo_collaborators_for_multiple_repos(
         repo_raw_data: list[dict[str, Any]],
         affiliation: str,
@@ -164,37 +163,24 @@ def _get_repo_collaborators_for_multiple_repos(
 
         collab_users = []
         collab_permission = []
+        collaborators = _get_repo_collaborators(token, api_url, org, repo_name, affiliation)
+        # we do not handle for empty or null/None nodes or edges: we expect them to always be present given that
+        # we call the API only if the totalCount is > 0
+        for collab in collaborators.nodes:
+            collab_users.append(collab)
+        for perm in collaborators.edges:
+            collab_permission.append(perm['permission'])
 
-        max_tries = 5
-        for current_try in range(1, max_tries + 1):
-            collaborators = _get_repo_collaborators(token, api_url, org, repo_name, affiliation)
-            try:
-                # The `or []` is because `.nodes` can be None. See:
-                # https://docs.github.com/en/graphql/reference/objects#repositorycollaboratorconnection
-                for collab in collaborators.nodes or []:
-                    collab_users.append(collab)
-
-                # The `or []` is because `.edges` can be None.
-                for perm in collaborators.edges or []:
-                    collab_permission.append(perm['permission'])
-                # We're done! Break out of the retry loop.
-                break
-
-            except TypeError:
-                # Handles issue #1334
-                logger.warning(
-                    f"GitHub returned None when trying to find collaborator data for repo {repo_name}.",
-                    exc_info=True,
-                )
-                if current_try == max_tries:
-                    raise RuntimeError(f"GitHub returned a None collaborator url for repo {repo_name}, retries exhausted.")
-                sleep(current_try ** 2)
-
-        result[repo_url] = [UserAffiliationAndRepoPermission(user, permission, affiliation) for user, permission in zip(collab_users, collab_permission)]
+        result[repo_url] = [
+            UserAffiliationAndRepoPermission(user, permission, affiliation)
+            for user, permission in zip(collab_users, collab_permission)
+        ]
     return result
 
 
-def _get_repo_collaborators(token: str, api_url: str, organization: str, repo: str, affiliation: str) -> List[Dict]:
+def _get_repo_collaborators(
+        token: str, api_url: str, organization: str, repo: str, affiliation: str,
+) -> PaginatedGraphqlData:
     """
     TODO docs
     """
@@ -205,8 +191,8 @@ def _get_repo_collaborators(token: str, api_url: str, organization: str, repo: s
         GITHUB_REPO_COLLABS_PAGINATED_GRAPHQL,
         'repository',
         resource_inner_type='collaborators',
-        repo = repo,
-        affiliation = affiliation
+        repo=repo,
+        affiliation=affiliation,
     )
     return collaborators
 
@@ -232,14 +218,18 @@ def get(token: str, api_url: str, organization: str) -> List[Dict]:
     return repos.nodes
 
 
-def transform(repos_json: List[Dict], direct_collaborators: dict[str, List[UserAffiliationAndRepoPermission]],
-              outside_collaborators: dict[str, List[UserAffiliationAndRepoPermission]]) -> Dict:
+def transform(
+    repos_json: List[Dict], direct_collaborators: dict[str, List[UserAffiliationAndRepoPermission]],
+    outside_collaborators: dict[str, List[UserAffiliationAndRepoPermission]],
+) -> Dict:
     """
     Parses the JSON returned from GitHub API to create data for graph ingestion
-    :param repos_json: the list of individual repository nodes from GitHub. See tests.data.github.repos.GET_REPOS for
-    data shape.
-    :param direct_collaborators: dict of repo URL to list of direct collaborators TODO test data probably
-    :param outside_collaborators: dict of repo URL to list of outside collaborators TODO test data probably
+    :param repos_json: the list of individual repository nodes from GitHub.
+        See tests.data.github.repos.GET_REPOS for data shape.
+    :param direct_collaborators: dict of repo URL to list of direct collaborators.
+        See tests.data.github.repos.DIRECT_COLLABORATORS for data shape.
+    :param outside_collaborators: dict of repo URL to list of outside collaborators.
+        See tests.data.github.repos.OUTSIDE_COLLABORATORS for data shape.
     :return: Dict containing the repos, repo->language mapping, owners->repo mapping, outside collaborators->repo
     mapping, and Python requirements files (if any) in a repo.
     """
@@ -258,10 +248,14 @@ def transform(repos_json: List[Dict], direct_collaborators: dict[str, List[UserA
         _transform_repo_languages(repo_object['url'], repo_object, transformed_repo_languages)
         _transform_repo_objects(repo_object, transformed_repo_list)
         _transform_repo_owners(repo_object['owner']['url'], repo_object, transformed_repo_owners)
-        _transform_collaborators(repo_object['url'], outside_collaborators[repo_object['url']],
-                                 transformed_outside_collaborators)
-        _transform_collaborators(repo_object['url'], direct_collaborators[repo_object['url']],
-                                 transformed_direct_collaborators)
+        _transform_collaborators(
+            repo_object['url'], outside_collaborators[repo_object['url']],
+            transformed_outside_collaborators,
+        )
+        _transform_collaborators(
+            repo_object['url'], direct_collaborators[repo_object['url']],
+            transformed_direct_collaborators,
+        )
         _transform_requirements_txt(repo_object['requirements'], repo_object['url'], transformed_requirements_files)
         _transform_setup_cfg_requirements(repo_object['setupCfg'], repo_object['url'], transformed_requirements_files)
     results = {
@@ -360,7 +354,9 @@ def _transform_repo_languages(repo_url: str, repo: Dict, repo_languages: List[Di
             })
 
 
-def _transform_collaborators(repo_url: str, collaborators: List[UserAffiliationAndRepoPermission], transformed_collaborators: Dict) -> None:
+def _transform_collaborators(
+        repo_url: str, collaborators: List[UserAffiliationAndRepoPermission], transformed_collaborators: Dict,
+) -> None:
     """
     Performs data adjustments for collaborators in a GitHub repo.
     Output data shape = [{permission, repo_url, url (the user's URL), login, name}, ...]
@@ -647,8 +643,12 @@ def load(neo4j_session: neo4j.Session, common_job_parameters: Dict, repo_data: D
     load_github_repos(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repos'])
     load_github_owners(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_owners'])
     load_github_languages(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_languages'])
-    load_collaborators(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_direct_collaborators'], 'DIRECT')
-    load_collaborators(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_outside_collaborators'], 'OUTSIDE')
+    load_collaborators(
+        neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_direct_collaborators'], 'DIRECT',
+    )
+    load_collaborators(
+        neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['repo_outside_collaborators'], 'OUTSIDE',
+    )
     load_python_requirements(neo4j_session, common_job_parameters['UPDATE_TAG'], repo_data['python_requirements'])
 
 
@@ -694,8 +694,12 @@ def sync(
     """
     logger.info("Syncing GitHub repos")
     repos_json = get(github_api_key, github_url, organization)
-    direct_collabs = _get_repo_collaborators_for_multiple_repos(repos_json, "DIRECT", organization, github_url, github_api_key)
-    outside_collabs = _get_repo_collaborators_for_multiple_repos(repos_json, "OUTSIDE", organization, github_url, github_api_key)
+    direct_collabs = _get_repo_collaborators_for_multiple_repos(
+        repos_json, "DIRECT", organization, github_url, github_api_key,
+    )
+    outside_collabs = _get_repo_collaborators_for_multiple_repos(
+        repos_json, "OUTSIDE", organization, github_url, github_api_key,
+    )
     repo_data = transform(repos_json, direct_collabs, outside_collabs)
     load(neo4j_session, common_job_parameters, repo_data)
     run_cleanup_job('github_repos_cleanup.json', neo4j_session, common_job_parameters)
