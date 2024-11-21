@@ -182,7 +182,15 @@ def _get_repo_collaborators(
         token: str, api_url: str, organization: str, repo: str, affiliation: str,
 ) -> PaginatedGraphqlData:
     """
-    TODO docs
+    Retrieve a list of collaborators for a given repository, as described in
+    https://docs.github.com/en/graphql/reference/objects#repositorycollaboratorconnection.
+    :param token: The Github API token as string.
+    :param api_url: The Github v4 API endpoint as string.
+    :param organization: The name of the target Github organization as string.
+    :pram repo: The name of the target Github repository as string.
+    :param affiliation: The type of affiliation to retrieve collaborators for. Either 'DIRECT' or 'OUTSIDE'.
+      See https://docs.github.com/en/graphql/reference/enums#collaboratoraffiliation
+    :return: A list of dicts representing repos. See tests.data.github.repos for data shape.
     """
     collaborators, _ = fetch_all(
         token,
@@ -360,7 +368,9 @@ def _transform_collaborators(
     """
     Performs data adjustments for collaborators in a GitHub repo.
     Output data shape = [{permission, repo_url, url (the user's URL), login, name}, ...]
-    :param collaborators: See cartography.tests.data.github.repos for data shape. TODO update test data probably
+    :param collaborators: For data shape, see
+        cartography.tests.data.github.repos.DIRECT_COLLABORATORS
+        cartography.tests.data.github.repos.OUTSIDE_COLLABORATORS
     :param repo_url: The URL of the GitHub repo.
     :param transformed_collaborators: Output dict. Data shape =
     {'ADMIN': [{ user }, ...], 'MAINTAIN': [{ user }, ...], 'READ': [ ... ], 'TRIAGE': [ ... ], 'WRITE': [ ... ]}
