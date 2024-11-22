@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=False)
 class UserAffiliationAndRepoPermission:
     """
-    Representation of a user's permission level to a GitHub repo and affiliation type to the target GitHub org. See:
+    Representation of a user's permission level and affiliation to a GitHub repo. See:
     - Permission: https://docs.github.com/en/graphql/reference/enums#repositorypermission
     - Affiliation: https://docs.github.com/en/graphql/reference/enums#collaboratoraffiliation
     """
@@ -164,8 +164,7 @@ def _get_repo_collaborators_for_multiple_repos(
         collab_users = []
         collab_permission = []
         collaborators = _get_repo_collaborators(token, api_url, org, repo_name, affiliation)
-        # we do not handle for empty or null/None nodes or edges: we expect them to always be present given that
-        # we call the API only if the totalCount is > 0
+        # nodes and edges are expected to always be present given that we only call for them if totalCount is > 0
         for collab in collaborators.nodes:
             collab_users.append(collab)
         for perm in collaborators.edges:
