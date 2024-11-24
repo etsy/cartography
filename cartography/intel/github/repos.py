@@ -1,6 +1,6 @@
 import configparser
 import logging
-from dataclasses import dataclass
+from collections import namedtuple
 from string import Template
 from typing import Any
 from typing import Dict
@@ -20,16 +20,17 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=False)
-class UserAffiliationAndRepoPermission:
-    """
-    Representation of a user's permission level and affiliation to a GitHub repo. See:
-    - Permission: https://docs.github.com/en/graphql/reference/enums#repositorypermission
-    - Affiliation: https://docs.github.com/en/graphql/reference/enums#collaboratoraffiliation
-    """
-    user: Dict
-    permission: str  # WRITE, MAINTAIN, ADMIN, etc
-    affiliation: str  # OUTSIDE, DIRECT
+# Representation of a user's permission level and affiliation to a GitHub repo. See:
+# - Permission: https://docs.github.com/en/graphql/reference/enums#repositorypermission
+# - Affiliation: https://docs.github.com/en/graphql/reference/enums#collaboratoraffiliation
+UserAffiliationAndRepoPermission = namedtuple(
+    'UserAffiliationAndRepoPermission',
+    [
+        'user',  # Dict
+        'permission',  # 'WRITE', 'MAINTAIN', 'ADMIN', etc
+        'affiliation',  # 'OUTSIDE', 'DIRECT'
+    ],
+)
 
 
 GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
