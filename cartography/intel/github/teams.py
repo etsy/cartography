@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 RepoPermission = namedtuple('RepoPermission', ['repo_url', 'permission'])
 # A team member's role: https://docs.github.com/en/graphql/reference/enums#teammemberrole
 UserRole = namedtuple('UserRole', ['user_url', 'role'])
+# A child team connection (https://docs.github.com/en/graphql/reference/objects#teamconnection) has no
+# qualification (like 'role' or 'permission' in the tuples above) to the relationship between team and
+# child team.  Child teams are just child teams.
+ChildTeam = namedtuple('ChildTeam', ['team_url'])
 
 
 @timeit
@@ -39,6 +43,9 @@ def get_teams(org: str, api_url: str, token: str) -> Tuple[PaginatedGraphqlData,
                             totalCount
                         }
                         members(first: 100, membership: IMMEDIATE) {
+                            totalCount
+                        }
+                        childTeams(first: 100) {
                             totalCount
                         }
                     }
@@ -243,11 +250,104 @@ def _get_team_users(org: str, api_url: str, token: str, team: str) -> PaginatedG
     return team_users
 
 
+def _get_child_teams_for_multiple_teams(
+        team_raw_data: list[dict[str, Any]],
+        org: str,
+        api_url: str,
+        token: str,
+) -> dict[str, list[ChildTeam]]:
+    result: dict[str, list[ChildTeam]] = {}
+    for team in team_raw_data:
+        team_name = team['slug']
+        team_count = team['childTeams']['totalCount']
+
+        if team_count == 0:
+            # This team has no child teams so let's move on
+            result[team_name] = []
+            continue
+
+        team_urls = []
+
+        max_tries = 5
+
+        for current_try in range(1, max_tries + 1):
+            child_teams = _get_child_teams(org, api_url, token, team_name)
+
+            try:
+                # The `or []` is because `.nodes` can be None. See:
+                # https://docs.github.com/en/graphql/reference/objects#teammemberconnection
+                for user in child_teams.nodes or []:
+                    team_urls.append(user['url'])
+
+                # Note there are no edges processed here because the team to child team connection has no
+                # qualification to it.  For example, there is no 'role' or 'permission' to the relationship,
+                # a child team is just a child team.
+
+                # We're done! Break out of the retry loop.
+                break
+
+            except TypeError:
+                # Handles issue #1334
+                logger.warning(
+                    f"GitHub returned None when trying to find child team for team {team_name}.",
+                    exc_info=True,
+                )
+                if current_try == max_tries:
+                    raise RuntimeError(
+                        f"GitHub returned a None child team url for team {team_name}, retries exhausted.",
+                    )
+                sleep(current_try ** 2)
+
+        result[team_name] = [ChildTeam(url) for url in team_urls]
+    return result
+
+
+def _get_child_teams(org: str, api_url: str, token: str, team: str) -> PaginatedGraphqlData:
+    team_users_gql = """
+    query($login: String!, $team: String!, $cursor: String) {
+        organization(login: $login) {
+            url
+            login
+            team(slug: $team) {
+                slug
+                childTeams(first: 100, after: $cursor) {
+                    totalCount
+                    nodes {
+                        url
+                    }
+                    pageInfo {
+                        endCursor
+                        hasNextPage
+                    }
+                }
+            }
+        }
+        rateLimit {
+            limit
+            cost
+            remaining
+            resetAt
+        }
+    }
+    """
+    team_users, _ = fetch_all(
+        token,
+        api_url,
+        org,
+        team_users_gql,
+        'team',
+        resource_inner_type='childTeams',
+        team=team,
+    )
+    return team_users
+
+
 def transform_teams(
         team_paginated_data: PaginatedGraphqlData,
         org_data: Dict[str, Any],
         team_repo_data: dict[str, list[RepoPermission]],
         team_user_data: dict[str, list[UserRole]],
+        team_child_team_data: dict[str, list[ChildTeam]],
 ) -> list[dict[str, Any]]:
     result = []
     for team in team_paginated_data.nodes:
@@ -258,13 +358,15 @@ def transform_teams(
             'description': team['description'],
             'repo_count': team['repositories']['totalCount'],
             'member_count': team['members']['totalCount'],
+            'child_team_count': team['childTeams']['totalCount'],
             'org_url': org_data['url'],
             'org_login': org_data['login'],
         }
         repo_permissions = team_repo_data[team_name]
         user_roles = team_user_data[team_name]
+        child_teams = team_child_team_data[team_name]
 
-        if not repo_permissions and not user_roles:
+        if not repo_permissions and not user_roles and not child_teams:
             result.append(repo_info)
             continue
 
@@ -279,6 +381,15 @@ def transform_teams(
             for user_url, role in user_roles:
                 repo_info_copy = repo_info.copy()
                 repo_info_copy[role] = user_url
+                result.append(repo_info_copy)
+        if child_teams:
+            for (team_url,) in child_teams:
+                repo_info_copy = repo_info.copy()
+                # GitHub does not itself seem to have a label to the team-childTeam relationship.  But elsewhere, it
+                # does distinguish between team members who are in a team directly or via a child team:
+                # https://docs.github.com/en/graphql/reference/enums#teammembershiptype
+                # We borrow the 'CHILD_TEAM' lavel from there, as it seems to be the most appropriate to use here.
+                repo_info_copy['CHILD_TEAM'] = team_url
                 result.append(repo_info_copy)
     return result
 
@@ -316,7 +427,8 @@ def sync_github_teams(
     teams_paginated, org_data = get_teams(organization, github_url, github_api_key)
     team_repos = _get_team_repos_for_multiple_teams(teams_paginated.nodes, organization, github_url, github_api_key)
     team_users = _get_team_users_for_multiple_teams(teams_paginated.nodes, organization, github_url, github_api_key)
-    processed_data = transform_teams(teams_paginated, org_data, team_repos, team_users)
+    team_children = _get_child_teams_for_multiple_teams(teams_paginated.nodes, organization, github_url, github_api_key)
+    processed_data = transform_teams(teams_paginated, org_data, team_repos, team_users, team_children)
     load_team_repos(neo4j_session, processed_data, common_job_parameters['UPDATE_TAG'], org_data['url'])
     common_job_parameters['org_url'] = org_data['url']
     cleanup(neo4j_session, common_job_parameters)
