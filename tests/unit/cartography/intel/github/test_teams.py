@@ -123,8 +123,8 @@ def test_get_team_users_happy_path(mock_get_team_users):
 
 
 @patch('cartography.intel.github.teams._get_team_repos')
-@patch('cartography.intel.github.teams.sleep')
-def test_get_team_repos_github_returns_none(mock_sleep, mock_get_team_repos):
+@patch('cartography.intel.github.teams.backoff_handler', spec=True)
+def test_get_team_repos_github_returns_none(mock_backoff_handler, mock_get_team_repos):
     # Arrange
     team_data = [{'slug': 'team1', 'repositories': {'totalCount': 1}}]
     mock_team_repos = MagicMock()
@@ -134,7 +134,7 @@ def test_get_team_repos_github_returns_none(mock_sleep, mock_get_team_repos):
     mock_get_team_repos.return_value = mock_team_repos
 
     # Assert we raise an exception
-    with pytest.raises(RuntimeError):
+    with pytest.raises(TypeError):
         _get_team_repos_for_multiple_teams(
             team_data,
             'test-org',
@@ -144,12 +144,12 @@ def test_get_team_repos_github_returns_none(mock_sleep, mock_get_team_repos):
 
     # Assert that we retry and give up
     assert mock_get_team_repos.call_count == 5
-    assert mock_sleep.call_count == 4
+    assert mock_backoff_handler.call_count == 4
 
 
 @patch('cartography.intel.github.teams._get_team_users')
-@patch('cartography.intel.github.teams.sleep')
-def test_get_team_users_github_returns_none(mock_sleep, mock_get_team_users):
+@patch('cartography.intel.github.teams.backoff_handler', spec=True)
+def test_get_team_users_github_returns_none(mock_backoff_handler, mock_get_team_users):
     # Arrange
     team_data = [{'slug': 'team1', 'members': {'totalCount': 1}}]
     mock_team_users = MagicMock()
@@ -159,7 +159,7 @@ def test_get_team_users_github_returns_none(mock_sleep, mock_get_team_users):
     mock_get_team_users.return_value = mock_team_users
 
     # Assert we raise an exception
-    with pytest.raises(RuntimeError):
+    with pytest.raises(TypeError):
         _get_team_users_for_multiple_teams(
             team_data,
             'test-org',
@@ -169,7 +169,7 @@ def test_get_team_users_github_returns_none(mock_sleep, mock_get_team_users):
 
     # Assert that we retry and give up
     assert mock_get_team_users.call_count == 5
-    assert mock_sleep.call_count == 4
+    assert mock_backoff_handler.call_count == 4
 
 
 def test_transform_teams_empty_team_data():
