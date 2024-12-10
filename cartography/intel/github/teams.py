@@ -35,10 +35,10 @@ def get_teams(org: str, api_url: str, token: str) -> Tuple[PaginatedGraphqlData,
                         slug
                         url
                         description
-                        repositories(first: 100) {
+                        repositories {
                             totalCount
                         }
-                        members(first: 100, membership: IMMEDIATE) {
+                        members(membership: IMMEDIATE) {
                             totalCount
                         }
                     }
@@ -98,7 +98,11 @@ def _get_team_repos_for_multiple_teams(
                 )
                 if current_try == max_tries:
                     raise RuntimeError(f"GitHub returned a None repo url for team {team_name}, retries exhausted.")
-                sleep(current_try ** 2)
+                sleep_time_seconds = current_try ** 2
+                logger.warning(
+                    f"Waiting {sleep_time_seconds} seconds before retrying to find repo/perm for team {team_name}.",
+                )
+                sleep(sleep_time_seconds)
 
         # Shape = [(repo_url, 'WRITE'), ...]]
         result[team_name] = [RepoPermission(url, perm) for url, perm in zip(repo_urls, repo_permissions)]
@@ -192,7 +196,11 @@ def _get_team_users_for_multiple_teams(
                 )
                 if current_try == max_tries:
                     raise RuntimeError(f"GitHub returned a None member url for team {team_name}, retries exhausted.")
-                sleep(current_try ** 2)
+                sleep_time_seconds = current_try ** 2
+                logger.warning(
+                    f"Waiting {sleep_time_seconds} seconds before retrying to find user or role for team {team_name}.",
+                )
+                sleep(sleep_time_seconds)
 
         # Shape = [(user_url, 'MAINTAINER'), ...]]
         result[team_name] = [UserRole(url, role) for url, role in zip(user_urls, user_roles)]
