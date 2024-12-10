@@ -1,6 +1,5 @@
 import logging
 from collections import namedtuple
-from time import sleep
 from typing import Any
 from typing import Dict
 from typing import List
@@ -13,6 +12,7 @@ from cartography.graph.job import GraphJob
 from cartography.intel.github.util import fetch_all
 from cartography.intel.github.util import PaginatedGraphqlData
 from cartography.models.github.teams import GitHubTeamSchema
+from cartography.util import retries_with_backoff
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,18 @@ logger = logging.getLogger(__name__)
 RepoPermission = namedtuple('RepoPermission', ['repo_url', 'permission'])
 # A team member's role: https://docs.github.com/en/graphql/reference/enums#teammemberrole
 UserRole = namedtuple('UserRole', ['user_url', 'role'])
+
+
+def backoff_handler(details: Dict) -> None:
+    """
+    Custom backoff handler for GitHub calls in this module.
+    """
+    team_name = details['kwargs'].get('team_name') or 'not present in kwargs'
+    updated_details = {**details, 'team_name': team_name}
+    logger.warning(
+        "Backing off {wait:0.1f} seconds after {tries} tries. Calling function {target} for team {team_name}"
+        .format(**updated_details),
+    )
 
 
 @timeit
@@ -70,40 +82,27 @@ def _get_team_repos_for_multiple_teams(
             result[team_name] = []
             continue
 
-        repo_urls = []
-        repo_permissions = []
+        repo_urls: List[str] = []
+        repo_permissions: List[str] = []
 
-        max_tries = 5
-
-        for current_try in range(1, max_tries + 1):
+        def get_teams_repos_inner_func(
+            org: str, api_url: str, token: str, team_name: str,
+            repo_urls: List[str], repo_permissions: List[str],
+        ) -> None:
+            logger.info(f"Loading team repos for {team_name}.")
             team_repos = _get_team_repos(org, api_url, token, team_name)
+            # The `or []` is because `.nodes` can be None. See:
+            # https://docs.github.com/en/graphql/reference/objects#teamrepositoryconnection
+            for repo in team_repos.nodes or []:
+                repo_urls.append(repo['url'])
+            # The `or []` is because `.edges` can be None.
+            for edge in team_repos.edges or []:
+                repo_permissions.append(edge['permission'])
 
-            try:
-                # The `or []` is because `.nodes` can be None. See:
-                # https://docs.github.com/en/graphql/reference/objects#teamrepositoryconnection
-                for repo in team_repos.nodes or []:
-                    repo_urls.append(repo['url'])
-
-                # The `or []` is because `.edges` can be None.
-                for edge in team_repos.edges or []:
-                    repo_permissions.append(edge['permission'])
-                # We're done! Break out of the retry loop.
-                break
-
-            except TypeError:
-                # Handles issue #1334
-                logger.warning(
-                    f"GitHub returned None when trying to find repo or permission data for team {team_name}.",
-                    exc_info=True,
-                )
-                if current_try == max_tries:
-                    raise RuntimeError(f"GitHub returned a None repo url for team {team_name}, retries exhausted.")
-                sleep_time_seconds = current_try ** 2
-                logger.warning(
-                    f"Waiting {sleep_time_seconds} seconds before retrying to find repo/perm for team {team_name}.",
-                )
-                sleep(sleep_time_seconds)
-
+        retries_with_backoff(get_teams_repos_inner_func, TypeError, 5, backoff_handler)(
+            org=org, api_url=api_url, token=token, team_name=team_name,
+            repo_urls=repo_urls, repo_permissions=repo_permissions,
+        )
         # Shape = [(repo_url, 'WRITE'), ...]]
         result[team_name] = [RepoPermission(url, perm) for url, perm in zip(repo_urls, repo_permissions)]
     return result
@@ -168,39 +167,26 @@ def _get_team_users_for_multiple_teams(
             result[team_name] = []
             continue
 
-        user_urls = []
-        user_roles = []
+        user_urls: List[str] = []
+        user_roles: List[str] = []
 
-        max_tries = 5
-
-        for current_try in range(1, max_tries + 1):
+        def get_teams_users_inner_func(
+            org: str, api_url: str, token: str, team_name: str,
+            user_urls: List[str], user_roles: List[str],
+        ) -> None:
+            logger.info(f"Loading team users for {team_name}.")
             team_users = _get_team_users(org, api_url, token, team_name)
+            # The `or []` is because `.nodes` can be None. See:
+            # https://docs.github.com/en/graphql/reference/objects#teammemberconnection
+            for user in team_users.nodes or []:
+                user_urls.append(user['url'])
+            # The `or []` is because `.edges` can be None.
+            for edge in team_users.edges or []:
+                user_roles.append(edge['role'])
 
-            try:
-                # The `or []` is because `.nodes` can be None. See:
-                # https://docs.github.com/en/graphql/reference/objects#teammemberconnection
-                for user in team_users.nodes or []:
-                    user_urls.append(user['url'])
-
-                # The `or []` is because `.edges` can be None.
-                for edge in team_users.edges or []:
-                    user_roles.append(edge['role'])
-                # We're done! Break out of the retry loop.
-                break
-
-            except TypeError:
-                # Handles issue #1334
-                logger.warning(
-                    f"GitHub returned None when trying to find user or role data for team {team_name}.",
-                    exc_info=True,
-                )
-                if current_try == max_tries:
-                    raise RuntimeError(f"GitHub returned a None member url for team {team_name}, retries exhausted.")
-                sleep_time_seconds = current_try ** 2
-                logger.warning(
-                    f"Waiting {sleep_time_seconds} seconds before retrying to find user or role for team {team_name}.",
-                )
-                sleep(sleep_time_seconds)
+        retries_with_backoff(get_teams_users_inner_func, TypeError, 5, backoff_handler)(
+            org=org, api_url=api_url, token=token, team_name=team_name, user_urls=user_urls, user_roles=user_roles,
+        )
 
         # Shape = [(user_url, 'MAINTAINER'), ...]]
         result[team_name] = [UserRole(url, role) for url, role in zip(user_urls, user_roles)]
