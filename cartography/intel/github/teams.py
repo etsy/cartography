@@ -172,6 +172,21 @@ def _get_team_repos(org: str, api_url: str, token: str, team: str) -> PaginatedG
     return team_repos
 
 
+def _get_teams_users_inner_func(
+        org: str, api_url: str, token: str, team_name: str,
+        user_urls: List[str], user_roles: List[str],
+) -> None:
+    logger.info(f"Loading team users for {team_name}.")
+    team_users = _get_team_users(org, api_url, token, team_name)
+    # The `or []` is because `.nodes` can be None. See:
+    # https://docs.github.com/en/graphql/reference/objects#teammemberconnection
+    for user in team_users.nodes or []:
+        user_urls.append(user['url'])
+    # The `or []` is because `.edges` can be None.
+    for edge in team_users.edges or []:
+        user_roles.append(edge['role'])
+
+
 def _get_team_users_for_multiple_teams(
         team_raw_data: list[dict[str, Any]],
         org: str,
@@ -191,21 +206,7 @@ def _get_team_users_for_multiple_teams(
         user_urls: List[str] = []
         user_roles: List[str] = []
 
-        def get_teams_users_inner_func(
-            org: str, api_url: str, token: str, team_name: str,
-            user_urls: List[str], user_roles: List[str],
-        ) -> None:
-            logger.info(f"Loading team users for {team_name}.")
-            team_users = _get_team_users(org, api_url, token, team_name)
-            # The `or []` is because `.nodes` can be None. See:
-            # https://docs.github.com/en/graphql/reference/objects#teammemberconnection
-            for user in team_users.nodes or []:
-                user_urls.append(user['url'])
-            # The `or []` is because `.edges` can be None.
-            for edge in team_users.edges or []:
-                user_roles.append(edge['role'])
-
-        retries_with_backoff(get_teams_users_inner_func, TypeError, 5, backoff_handler)(
+        retries_with_backoff(_get_teams_users_inner_func, TypeError, 5, backoff_handler)(
             org=org, api_url=api_url, token=token, team_name=team_name, user_urls=user_urls, user_roles=user_roles,
         )
 
@@ -258,6 +259,18 @@ def _get_team_users(org: str, api_url: str, token: str, team: str) -> PaginatedG
     return team_users
 
 
+def _get_child_teams_inner_func(
+        org: str, api_url: str, token: str, team_name: str, team_urls: List[str],
+) -> None:
+    logger.info(f"Loading child teams for {team_name}.")
+    child_teams = _get_child_teams(org, api_url, token, team_name)
+    # The `or []` is because `.nodes` can be None. See:
+    # https://docs.github.com/en/graphql/reference/objects#teammemberconnection
+    for cteam in child_teams.nodes or []:
+        team_urls.append(cteam['url'])
+    # No edges to process here, the GitHub response for child teams has no relevant info in edges.
+
+
 def _get_child_teams_for_multiple_teams(
         team_raw_data: list[dict[str, Any]],
         org: str,
@@ -276,18 +289,7 @@ def _get_child_teams_for_multiple_teams(
 
         team_urls: List[str] = []
 
-        def get_child_teams_inner_func(
-            org: str, api_url: str, token: str, team_name: str, team_urls: List[str],
-        ) -> None:
-            logger.info(f"Loading child teams for {team_name}.")
-            child_teams = _get_child_teams(org, api_url, token, team_name)
-            # The `or []` is because `.nodes` can be None. See:
-            # https://docs.github.com/en/graphql/reference/objects#teammemberconnection
-            for cteam in child_teams.nodes or []:
-                team_urls.append(cteam['url'])
-            # No edges to process here, the GitHub response for child teams has no relevant info in edges.
-
-        retries_with_backoff(get_child_teams_inner_func, TypeError, 5, backoff_handler)(
+        retries_with_backoff(_get_child_teams_inner_func, TypeError, 5, backoff_handler)(
             org=org, api_url=api_url, token=token, team_name=team_name, team_urls=team_urls,
         )
 

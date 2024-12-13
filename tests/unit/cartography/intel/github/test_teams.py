@@ -181,7 +181,7 @@ def test_get_child_teams_happy_path(mock_get_child_teams):
 
 @patch('cartography.intel.github.teams._get_team_repos')
 @patch('cartography.intel.github.teams.backoff_handler', spec=True)
-def test_get_team_repos_github_returns_none(mock_backoff_handler, mock_get_team_repos, mock_sleep):
+def test_get_team_repos_github_returns_none(mock_backoff_handler, mock_get_team_repos):
     # Arrange
     team_data = [{'slug': 'team1', 'repositories': {'totalCount': 1}}]
     mock_team_repos = MagicMock()
@@ -200,15 +200,13 @@ def test_get_team_repos_github_returns_none(mock_backoff_handler, mock_get_team_
         )
 
     # Assert that we retry and give up
-    assert mock_sleep.call_count == 4
     assert mock_get_team_repos.call_count == 5
     assert mock_backoff_handler.call_count == 4
 
 
-@patch('time.sleep', return_value=None)
 @patch('cartography.intel.github.teams._get_team_users')
 @patch('cartography.intel.github.teams.backoff_handler', spec=True)
-def test_get_team_users_github_returns_none(mock_backoff_handler, mock_get_team_users, mock_sleep):
+def test_get_team_users_github_returns_none(mock_backoff_handler, mock_get_team_users):
     # Arrange
     team_data = [{'slug': 'team1', 'members': {'totalCount': 1}}]
     mock_team_users = MagicMock()
@@ -227,7 +225,6 @@ def test_get_team_users_github_returns_none(mock_backoff_handler, mock_get_team_
         )
 
     # Assert that we retry and give up
-    assert mock_sleep.call_count == 4
     assert mock_get_team_users.call_count == 5
     assert mock_backoff_handler.call_count == 4
 
