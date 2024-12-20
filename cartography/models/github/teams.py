@@ -132,10 +132,10 @@ class GitHubTeamToChildTeamRelProperties(CartographyRelProperties):
 class GitHubTeamChildTeamRel(CartographyRelSchema):
     target_node_label: str = 'GitHubTeam'
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {'id': PropertyRef('CHILD_TEAM')},
+        {'id': PropertyRef('MEMBER_OF_TEAM')},
     )
     direction: LinkDirection = LinkDirection.INWARD
-    rel_label: str = "CHILD_TEAM"
+    rel_label: str = "MEMBER_OF_TEAM"
     properties: GitHubTeamToChildTeamRelProperties = GitHubTeamToChildTeamRelProperties()
 
 

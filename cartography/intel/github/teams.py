@@ -380,11 +380,11 @@ def transform_teams(
         if child_teams:
             for (team_url,) in child_teams:
                 repo_info_copy = repo_info.copy()
-                # GitHub does not itself seem to have a label to the team-childTeam relationship.  But elsewhere, it
-                # does distinguish between team members who are in a team directly or via a child team:
-                # https://docs.github.com/en/graphql/reference/enums#teammembershiptype
-                # We borrow the 'CHILD_TEAM' label from there, as it seems to be the most appropriate to use here.
-                repo_info_copy['CHILD_TEAM'] = team_url
+                # GitHub speaks of team-team relationships as 'child teams', as in the graphql query
+                # or here: https://docs.github.com/en/graphql/reference/enums#teammembershiptype
+                # We label the relationship as 'MEMBER_OF_TEAM' here because it is in line with
+                # other similar relationships in Cartography.
+                repo_info_copy['MEMBER_OF_TEAM'] = team_url
                 result.append(repo_info_copy)
     return result
 

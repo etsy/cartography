@@ -446,7 +446,7 @@ def test_transform_teams_team_with_child_teams():
             'child_team_count': 2,
             'org_url': 'https://github.com/testorg',
             'org_login': 'testorg',
-            'CHILD_TEAM': 'https://github.com/orgs/foo/teams/team1',
+            'MEMBER_OF_TEAM': 'https://github.com/orgs/foo/teams/team1',
         },
         {
             'name': 'team1',
@@ -457,7 +457,7 @@ def test_transform_teams_team_with_child_teams():
             'child_team_count': 2,
             'org_url': 'https://github.com/testorg',
             'org_login': 'testorg',
-            'CHILD_TEAM': 'https://github.com/orgs/foo/teams/team2',
+            'MEMBER_OF_TEAM': 'https://github.com/orgs/foo/teams/team2',
         },
     ]
 
@@ -553,7 +553,7 @@ def test_transform_teams_team_with_all_the_relationships():
             'child_team_count': 2,
             'org_url': 'https://github.com/testorg',
             'org_login': 'testorg',
-            'CHILD_TEAM': 'https://github.com/orgs/foo/teams/team1',
+            'MEMBER_OF_TEAM': 'https://github.com/orgs/foo/teams/team1',
         },
         {
             'name': 'team1',
@@ -564,7 +564,7 @@ def test_transform_teams_team_with_all_the_relationships():
             'child_team_count': 2,
             'org_url': 'https://github.com/testorg',
             'org_login': 'testorg',
-            'CHILD_TEAM': 'https://github.com/orgs/foo/teams/team2',
+            'MEMBER_OF_TEAM': 'https://github.com/orgs/foo/teams/team2',
         },
     ]
 
@@ -657,6 +657,6 @@ def test_transform_teams_multiple_teams():
             'child_team_count': 1,
             'org_url': 'https://github.com/testorg',
             'org_login': 'testorg',
-            'CHILD_TEAM': 'https://github.com/testorg/team3',
+            'MEMBER_OF_TEAM': 'https://github.com/testorg/team3',
         },
     ]

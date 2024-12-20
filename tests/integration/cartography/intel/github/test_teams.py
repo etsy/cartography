@@ -145,7 +145,7 @@ def test_sync_github_teams(mock_teams, mock_team_repos, mock_team_users, mock_ch
         neo4j_session,
         'GitHubTeam', 'id',
         'GitHubTeam', 'id',
-        'CHILD_TEAM',
+        'MEMBER_OF_TEAM',
         rel_direction_right=False,
     ) == {
         ('https://github.com/orgs/example_org/teams/team-d', 'https://github.com/orgs/example_org/teams/team-a'),
